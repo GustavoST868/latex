@@ -16,8 +16,8 @@
 % Espaçamento
 \setlength{\parskip}{0.5em}
 
-% Título centralizado
-\setbeamertemplate{frametitle}[default][center]
+% Título alinhado à esquerda
+\setbeamertemplate{frametitle}[default][left]
 
 % Pacotes
 \usepackage[utf8]{inputenc}
@@ -30,7 +30,7 @@
 \justifying
 
 % Informações
-\title{Carreira na Computação}
+\title{Extração de Relações Ontológicas em Um Corpus de Artigos sobre o Pré-Sal}
 \author{Gustavo Santos Teixeira}
 \institute{Universidade Federal do Rio Grande do Sul}
 \date{\today}
@@ -57,24 +57,52 @@
 
 \begin{document}
 
+
+
+
+% Slide inicial
 \begin{frame}
     \titlepage
 \end{frame}
 
-\begin{frame}{Teste}
-Este é um exemplo de texto justificado. Ele agora ocupa melhor o espaço horizontal do slide, deixando o visual mais limpo e profissional.
 
-Este é um exemplo de citação: \citeonline{Silva2019}.
-\end{frame}
 
-\begin{frame}{Tópicos}
+
+
+% Slide de contexto
+\begin{frame}{Contextualização}
 \begin{itemize}
-    \item Primeiro ponto com descrição um pouco maior para mostrar alinhamento correto
-    \item Segundo ponto também com texto mais longo
-    \item Terceiro ponto
+    \item Estudo relacionado ao domínio geológico.
 \end{itemize}
 \end{frame}
 
+
+
+% Slide de contexto
+\begin{frame}{Contextualização}
+\begin{itemize}
+    \item Estudo relacionado ao domínio geológico.
+    \item Procura extrair relações ontológicas a partir de um \textit{corpus} e de um \textit{dataset}.
+\end{itemize}
+\end{frame}
+
+
+
+
+
+% Slide de contexto
+\begin{frame}{Contextualização}
+\begin{itemize}
+   \item Estudo relacionado ao domínio geológico.
+    \item Procura extrair relações ontológicas a partir de um \textit{corpus} e de um \textit{dataset}.
+    \item O \textit{corpus} e o \textit{dataset} utilizados são compostos por artigos sobre o Pré-Sal e por termos ontológicos extraídos e validados por especialistas do domínio.
+\end{itemize}
+\end{frame}
+
+
+
+
+% Slide de referências
 \begin{frame}{Referências}
 \bibliographystyle{abntex2-alf}
 \bibliography{referencias}
