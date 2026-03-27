@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LaTeX Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── TOP BAR ── -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+        <rect width="28" height="28" rx="6" fill="#1a1a1a"/>
+        <text x="4" y="21" font-size="17" fill="#fff" font-family="Georgia,serif" font-weight="bold">∑</text>
+      </svg>
+      <div class="topbar-title">
+        <span class="app-name">LaTeX Studio</span>
+        <span class="file-name" id="file-name">—</span>
+      </div>
+    </div>
+
+    <div class="topbar-actions">
+      <div class="save-status" id="save-status"></div>
+
+      <button class="btn btn-ghost" id="btn-save" title="Salvar (Ctrl+S)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+          <polyline points="17 21 17 13 7 13 7 21"/>
+          <polyline points="7 3 7 8 15 8"/>
+        </svg>
+        Salvar
+      </button>
+
+      <button class="btn btn-compile" id="btn-compile">
+        <div class="spinner hidden" id="spinner"></div>
+        <svg id="compile-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        <span id="compile-label">Compilar PDF</span>
+      </button>
+
+      <div class="compile-badge hidden" id="compile-badge"></div>
+
+      <div class="sep"></div>
+
+      <button class="btn btn-ghost icon-only" id="btn-download" title="Baixar PDF" disabled>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </button>
+
+      <button class="btn btn-ghost icon-only" id="btn-log" title="Log de compilação">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="8" y1="13" x2="16" y2="13"/>
+          <line x1="8" y1="17" x2="16" y2="17"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ── SPLIT EDITOR ── -->
+  <div class="workspace" id="workspace">
+
+    <!-- LEFT: Code Editor -->
+    <div class="editor-panel" id="editor-panel">
+      <div class="editor-inner">
+        <div class="line-nums" id="line-nums">1</div>
+        <textarea
+          id="editor"
+          spellcheck="false"
+          autocorrect="off"
+          autocapitalize="off"
+          placeholder="Carregando…"
+        ></textarea>
+      </div>
+    </div>
+
+    <!-- Resize handle -->
+    <div class="split-handle" id="split-handle"></div>
+
+    <!-- RIGHT: PDF Preview -->
+    <div class="preview-panel" id="preview-panel">
+      <div class="preview-toolbar">
+        <div class="zoom-controls">
+          <button class="icon-btn" id="btn-zoom-out" title="Zoom −">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <span id="zoom-label" class="zoom-label">130%</span>
+          <button class="icon-btn" id="btn-zoom-in" title="Zoom +">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
+        <span class="page-count" id="page-count"></span>
+      </div>
+
+      <div class="pdf-scroll" id="pdf-scroll">
+        <div class="pdf-empty" id="pdf-empty">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="1.2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+          <p>Clique em <strong>Compilar PDF</strong></p>
+          <p class="sub">ou pressione Ctrl + Enter</p>
+        </div>
+        <div class="pdf-pages" id="pdf-pages"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── LOG PANEL ── -->
+  <div class="log-panel" id="log-panel">
+    <div class="log-header">
+      <span>Log de Compilação</span>
+      <button class="icon-btn" id="btn-close-log">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <pre class="log-content" id="log-content"></pre>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
