@@ -251,5 +251,10 @@ app.post('/api/projects/:name/compile', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`\n🚀 LaTeX Editor rodando em http://localhost:${PORT}\n`);
+  const url = `http://localhost:${PORT}`;
+  console.log(`\n🚀 LaTeX Editor rodando em ${url}\n`);
+
+  // Abre o navegador automaticamente (Multi-plataforma: Windows, Mac, Linux)
+  const start = (process.platform == 'darwin' ? 'open' : process.platform == 'win32' ? 'start' : 'xdg-open');
+  exec(`${start} ${url}`);
 });

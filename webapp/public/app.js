@@ -117,10 +117,10 @@ editor.addEventListener('keydown', e => {
     if (!S.dirty) { S.dirty = true; updateSaveStatus('dirty'); }
     renderLineNums();
   }
-  // Ctrl+S
+  // Ctrl+S -> Save & Compile
   if ((e.ctrlKey || e.metaKey) && e.key === 's') {
     e.preventDefault();
-    saveFile();
+    saveFile().then(() => compile());
   }
   // Ctrl+Enter
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
