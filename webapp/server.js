@@ -102,6 +102,7 @@ app.post('/api/projects', (req, res) => {
     const defaultTex = `\\documentclass{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage[brazil]{babel}
+\\usepackage{graphicx}
 
 \\title{${name}}
 \\author{Seu Nome}
@@ -234,7 +235,13 @@ app.post('/api/projects/:name/compile', (req, res) => {
 
   function runCmd(cmd, cwd) {
     return new Promise((resolve, reject) => {
-      const proc = exec(cmd, { cwd, timeout: 60000 }, (err, stdout, stderr) => {
+      // Força o LaTeX a procurar arquivos na pasta do projeto (cwd)
+      const env = { 
+        ...process.env, 
+        TEXINPUTS: `.:${cwd}:` + (process.env.TEXINPUTS || '') 
+      };
+      
+      const proc = exec(cmd, { cwd, env, timeout: 60000 }, (err, stdout, stderr) => {
         const out = (stdout || '') + (stderr || '');
         logOutput += out + '\n';
         broadcast({ type: 'compile_log', data: out });
@@ -246,16 +253,22 @@ app.post('/api/projects/:name/compile', (req, res) => {
 
   (async () => {
     try {
+      // Use only the basename for the command to ensure LaTeX looks in the CWD (projectPath)
+      const mainFileBasename = path.basename(mainFile);
+      
       // Run pdflatex → bibtex → pdflatex → pdflatex
-      await runCmd(`pdflatex -interaction=nonstopmode -halt-on-error "${mainFile}"`, projectPath);
+      // Added -shell-escape to allow some packages to run external commands (common for images)
+      // Added -file-line-error for better log parsing
+      // Added -output-directory=. to force output to current folder (projectPath)
+      await runCmd(`pdflatex -interaction=nonstopmode -halt-on-error -file-line-error -shell-escape -output-directory=. "${mainFileBasename}"`, projectPath);
 
-      const bibFile = path.join(projectPath, baseName + '.aux');
-      if (fs.existsSync(bibFile)) {
+      const auxFile = path.join(projectPath, baseName + '.aux');
+      if (fs.existsSync(auxFile)) {
         try { await runCmd(`bibtex "${baseName}"`, projectPath); } catch (e) {}
       }
 
-      await runCmd(`pdflatex -interaction=nonstopmode "${mainFile}"`, projectPath);
-      await runCmd(`pdflatex -interaction=nonstopmode "${mainFile}"`, projectPath);
+      await runCmd(`pdflatex -interaction=nonstopmode -file-line-error -shell-escape -output-directory=. "${mainFileBasename}"`, projectPath);
+      await runCmd(`pdflatex -interaction=nonstopmode -file-line-error -shell-escape -output-directory=. "${mainFileBasename}"`, projectPath);
 
       const pdfPath = path.join(projectPath, baseName + '.pdf');
       const success = fs.existsSync(pdfPath);

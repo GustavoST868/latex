@@ -29,20 +29,68 @@ const S = {
 };
 
 const LATEX_COMMANDS = [
-  'begin', 'end', 'section', 'subsection', 'subsubsection', 'paragraph',
-  'textbf', 'textit', 'underline', 'emph', 'texttt', 'textsc',
-  'item', 'enumerate', 'itemize', 'description',
-  'label', 'ref', 'cite', 'caption', 'footnote',
-  'documentclass', 'usepackage', 'author', 'title', 'date', 'maketitle',
-  'centering', 'include', 'input', 'includegraphics', 'table', 'figure',
-  'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta', 'iota', 'kappa', 'lambda', 'mu', 'nu', 'xi', 'pi', 'rho', 'sigma', 'tau', 'upsilon', 'phi', 'chi', 'psi', 'omega',
-  'Gamma', 'Delta', 'Theta', 'Lambda', 'Xi', 'Pi', 'Sigma', 'Upsilon', 'Phi', 'Psi', 'Omega',
-  'frac', 'sqrt', 'sum', 'int', 'limit', 'infty', 'partial', 'nabla', 'oint', 'prod',
-  'sin', 'cos', 'tan', 'log', 'ln', 'exp', 'min', 'max', 'sup', 'inf',
-  'neq', 'leq', 'geq', 'approx', 'equiv', 'cdot', 'times', 'div', 'pm', 'mp',
-  'rightarrow', 'leftarrow', 'Rightarrow', 'Leftarrow', 'leftrightarrow', 'Leftrightarrow',
-  'mathbb', 'mathcal', 'mathfrak'
-].sort();
+  // Structure & Formatting
+  { name: 'begin', snippet: 'begin{$1}\n  $0\n\\end{$1}' },
+  { name: 'end', snippet: 'end{$1}' },
+  { name: 'section', snippet: 'section{$1}' },
+  { name: 'subsection', snippet: 'subsection{$1}' },
+  { name: 'subsubsection', snippet: 'subsubsection{$1}' },
+  { name: 'paragraph', snippet: 'paragraph{$1}' },
+  { name: 'textbf', snippet: 'textbf{$1}' },
+  { name: 'textit', snippet: 'textit{$1}' },
+  { name: 'underline', snippet: 'underline{$1}' },
+  { name: 'texttt', snippet: 'texttt{$1}' },
+  { name: 'textsc', snippet: 'textsc{$1}' },
+  { name: 'author', snippet: 'author{$1}' },
+  { name: 'title', snippet: 'title{$1}' },
+  { name: 'date', snippet: 'date{\\today}' },
+  { name: 'emph', snippet: 'emph{$1}' },
+  { name: 'usepackage', snippet: 'usepackage{$1}' },
+  { name: 'documentclass', snippet: 'documentclass{$1}' },
+  { name: 'maketitle', snippet: 'maketitle' },
+  { name: 'centering', snippet: 'centering' },
+  { name: 'item', snippet: 'item ' },
+  { name: 'label', snippet: 'label{$1}' },
+  { name: 'ref', snippet: 'ref{$1}' },
+  { name: 'cite', snippet: 'cite{$1}' },
+  { name: 'caption', snippet: 'caption{$1}' },
+  { name: 'footnote', snippet: 'footnote{$1}' },
+  { name: 'includegraphics', snippet: 'includegraphics[width=$1]{$2}' },
+  
+  // Tables & Figures
+  { name: 'table', snippet: 'begin{table}[h!]\n  \\centering\n  \\begin{tabular}{|c|c|}\n    \\hline\n    $1 & $2 \\\\\n    \\hline\n    $3 & $4 \\\\\n    \\hline\n  \\end{tabular}\n  \\caption{$5}\n  \\label{tab:$6}\n\\end{table}' },
+  { name: 'figure', snippet: 'begin{figure}[h!]\n  \\centering\n  \\includegraphics[width=0.8\\textwidth]{$1}\n  \\caption{$2}\n  \\label{fig:$3}\n\\end{figure}' },
+  { name: 'tabular', snippet: 'begin{tabular}{|c|c|}\n  \\hline\n  $1 & $2 \\\\\n  \\hline\n\\end{tabular}' },
+  
+  // Math environments
+  { name: 'equation', snippet: 'begin{equation}\n  $1\n\\end{equation}' },
+  { name: 'align', snippet: 'begin{align}\n  $1\n\\end{align}' },
+  { name: 'itemize', snippet: 'begin{itemize}\n  \\item $1\n\\end{itemize}' },
+  { name: 'enumerate', snippet: 'begin{enumerate}\n  \\item $1\n\\end{enumerate}' },
+  
+  // Math symbols & Greek
+  { name: 'frac', snippet: 'frac{$1}{$2}' },
+  { name: 'sqrt', snippet: 'sqrt{$1}' },
+  { name: 'sum', snippet: 'sum_{$1}^{$2}' },
+  { name: 'int', snippet: 'int_{$1}^{$2}' },
+  { name: 'limit', snippet: 'limit_{$1}' },
+  { name: 'alpha' }, { name: 'beta' }, { name: 'gamma' }, { name: 'delta' }, { name: 'epsilon' },
+  { name: 'zeta' }, { name: 'eta' }, { name: 'theta' }, { name: 'iota' }, { name: 'kappa' },
+  { name: 'lambda' }, { name: 'mu' }, { name: 'nu' }, { name: 'xi' }, { name: 'pi' },
+  { name: 'rho' }, { name: 'sigma' }, { name: 'tau' }, { name: 'upsilon' }, { name: 'phi' },
+  { name: 'chi' }, { name: 'psi' }, { name: 'omega' },
+  { name: 'Gamma' }, { name: 'Delta' }, { name: 'Theta' }, { name: 'Lambda' }, { name: 'Xi' },
+  { name: 'Pi' }, { name: 'Sigma' }, { name: 'Upsilon' }, { name: 'Phi' }, { name: 'Psi' }, { name: 'Omega' },
+  
+  // Common math ops
+  { name: 'sin' }, { name: 'cos' }, { name: 'tan' }, { name: 'log' }, { name: 'ln' }, { name: 'exp' },
+  { name: 'min' }, { name: 'max' }, { name: 'sup' }, { name: 'inf' },
+  { name: 'neq' }, { name: 'leq' }, { name: 'geq' }, { name: 'approx' }, { name: 'equiv' },
+  { name: 'times' }, { name: 'div' }, { name: 'cdot' }, { name: 'pm' }, { name: 'mp' },
+  { name: 'rightarrow' }, { name: 'leftarrow' }, { name: 'Rightarrow' }, { name: 'Leftarrow' },
+  { name: 'mathbb', snippet: 'mathbb{$1}' },
+  { name: 'mathcal', snippet: 'mathcal{$1}' }
+].sort((a,b) => a.name.localeCompare(b.name));
 
 const editorScreen = $('editor-screen');
 const homeScreen   = $('home-screen');
@@ -220,9 +268,62 @@ function renderFileList() {
       `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>`;
 
     item.innerHTML = `${icon}<span>${f.name}</span>`;
+    
+    // Add delete button
+    const delBtn = document.createElement('button');
+    delBtn.className = 'icon-btn btn-file-delete';
+    delBtn.title = 'Excluir arquivo';
+    delBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`;
+    delBtn.onclick = (e) => {
+      e.stopPropagation();
+      deleteFile(f.name);
+    };
+    item.appendChild(delBtn);
+
     item.onclick = () => switchFile(f.name, f.type);
     listEl.appendChild(item);
   });
+}
+
+async function createNewFile() {
+  const name = prompt('Nome do novo arquivo (ex: capitulo1.tex):');
+  if (!name) return;
+  
+  try {
+    await api(`/api/projects/${encodeURIComponent(S.project)}/files/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: '' })
+    });
+    toast('Arquivo criado');
+    await refreshProjectFiles();
+    // Auto switch to it
+    const ext = name.split('.').pop().toLowerCase();
+    const type = ['.tex', '.bib', '.txt', '.md'].includes('.' + ext) ? 'text' : 'binary';
+    if (type === 'text') switchFile(name, 'text');
+  } catch (err) {
+    toast('Erro: ' + err.message, 'err');
+  }
+}
+
+async function deleteFile(name) {
+  if (name === 'main.tex') {
+    toast('Não é possível excluir o arquivo principal', 'err');
+    return;
+  }
+  if (!confirm(`Excluir o arquivo "${name}" permanentemente?`)) return;
+  
+  try {
+    await api(`/api/projects/${encodeURIComponent(S.project)}/files/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    toast('Arquivo excluído');
+    if (S.mainFile === name) {
+      // If we deleted the current file, switch back to main.tex
+      switchFile('main.tex', 'text');
+    }
+    await refreshProjectFiles();
+  } catch (err) {
+    toast('Erro: ' + err.message, 'err');
+  }
 }
 
 async function switchFile(name, type) {
@@ -269,6 +370,7 @@ async function switchFile(name, type) {
 }
 
 // ─── UPLOAD ───
+$('btn-new-file').onclick = createNewFile;
 $('btn-upload-trigger').onclick = () => $('file-upload-input').click();
 
 $('file-upload-input').onchange = async (e) => {
@@ -465,7 +567,7 @@ editor.addEventListener('input', (e) => {
 });
 
 function showAutocomplete(q, start, end) {
-  const matches = LATEX_COMMANDS.filter(cmd => cmd.startsWith(q.toLowerCase()));
+  const matches = LATEX_COMMANDS.filter(cmd => cmd.name.startsWith(q.toLowerCase()));
   if (matches.length === 0) {
     hideAutocomplete();
     return;
@@ -492,7 +594,7 @@ function renderAutocompleteList(list) {
   list.forEach((cmd, i) => {
     const item = document.createElement('div');
     item.className = 'autocomplete-item' + (i === S.autocomplete.index ? ' active' : '');
-    item.innerHTML = `<span class="cmd-prefix">\\</span>${cmd}`;
+    item.innerHTML = `<span class="cmd-prefix">\\</span>${cmd.name}`;
     item.onclick = () => insertCommand(cmd);
     dropdown.appendChild(item);
   });
@@ -507,16 +609,32 @@ function updateAutocompleteUI() {
   });
 }
 
-function insertCommand(cmd) {
+function insertCommand(cmdObj) {
   const s = S.autocomplete.start;
   const e = S.autocomplete.end;
   const text = editor.value;
   
-  // Insert with backslash
-  const replacement = '\\' + cmd;
-  editor.value = text.substring(0, s) + replacement + text.substring(e);
+  // Use snippet if available, else just command name
+  const snippet = cmdObj.snippet || cmdObj.name;
+  let replacement = '\\' + snippet;
   
-  const newPos = s + replacement.length;
+  // Simple snippet expansion: replace $1, $2, $0 with empty and position cursor
+  // Find first placeholder index
+  let firstPlaceholder = replacement.indexOf('$1');
+  if (firstPlaceholder === -1) firstPlaceholder = replacement.indexOf('$0');
+  
+  // Clean placeholders
+  const cleanReplacement = replacement.replace(/\$[0-9]/g, '');
+  
+  editor.value = text.substring(0, s) + cleanReplacement + text.substring(e);
+  
+  let newPos;
+  if (firstPlaceholder !== -1) {
+    newPos = s + firstPlaceholder;
+  } else {
+    newPos = s + cleanReplacement.length;
+  }
+  
   editor.selectionStart = editor.selectionEnd = newPos;
   
   S.content = editor.value;

@@ -176,6 +176,11 @@ button { font-family: inherit; cursor: pointer; }
   letter-spacing: .5px;
 }
 
+.file-actions {
+  display: flex;
+  gap: 4px;
+}
+
 .file-list {
   flex: 1;
   overflow-y: auto;
@@ -192,6 +197,7 @@ button { font-family: inherit; cursor: pointer; }
   cursor: pointer;
   transition: background .12s, color .12s;
   user-select: none;
+  position: relative;
 }
 
 .file-item:hover {
@@ -203,6 +209,30 @@ button { font-family: inherit; cursor: pointer; }
   background: #e6f4ec;
   color: #1f7a45;
   font-weight: 500;
+}
+
+.file-item span {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-file-delete {
+  padding: 4px;
+  border-radius: 4px;
+  color: #b94040;
+  opacity: 0;
+  transition: opacity .12s, background .12s;
+}
+
+.file-item:hover .btn-file-delete {
+  opacity: 0.6;
+}
+
+.btn-file-delete:hover {
+  opacity: 1 !important;
+  background: rgba(185, 64, 64, 0.08);
 }
 
 .file-item svg {
