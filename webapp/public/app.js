@@ -9,15 +9,43 @@ const $ = id => document.getElementById(id);
 
 const S = {
   project: null,
+  projects: [],
   mainFile: null,
   dirty: false,
   content: '',
   compiling: false,
   pdf: null,
   pdfZoom: 1.3,
-  pdfUrl: null
+  pdfUrl: null,
+  autocomplete: {
+    visible: false,
+    query: '',
+    index: 0,
+    list: [],
+    start: 0,
+    end: 0
+  },
+  files: []
 };
 
+const LATEX_COMMANDS = [
+  'begin', 'end', 'section', 'subsection', 'subsubsection', 'paragraph',
+  'textbf', 'textit', 'underline', 'emph', 'texttt', 'textsc',
+  'item', 'enumerate', 'itemize', 'description',
+  'label', 'ref', 'cite', 'caption', 'footnote',
+  'documentclass', 'usepackage', 'author', 'title', 'date', 'maketitle',
+  'centering', 'include', 'input', 'includegraphics', 'table', 'figure',
+  'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta', 'iota', 'kappa', 'lambda', 'mu', 'nu', 'xi', 'pi', 'rho', 'sigma', 'tau', 'upsilon', 'phi', 'chi', 'psi', 'omega',
+  'Gamma', 'Delta', 'Theta', 'Lambda', 'Xi', 'Pi', 'Sigma', 'Upsilon', 'Phi', 'Psi', 'Omega',
+  'frac', 'sqrt', 'sum', 'int', 'limit', 'infty', 'partial', 'nabla', 'oint', 'prod',
+  'sin', 'cos', 'tan', 'log', 'ln', 'exp', 'min', 'max', 'sup', 'inf',
+  'neq', 'leq', 'geq', 'approx', 'equiv', 'cdot', 'times', 'div', 'pm', 'mp',
+  'rightarrow', 'leftarrow', 'Rightarrow', 'Leftarrow', 'leftrightarrow', 'Leftrightarrow',
+  'mathbb', 'mathcal', 'mathfrak'
+].sort();
+
+const editorScreen = $('editor-screen');
+const homeScreen   = $('home-screen');
 const editor       = $('editor');
 const lineNums     = $('line-nums');
 const btnSave      = $('btn-save');
@@ -49,12 +77,98 @@ async function api(url, opts = {}) {
 // ════════════════════════════════════
 async function initApp() {
   try {
-    // Auto-discover the first project & main text file
-    const config = await api('/api/config');
-    S.project = config.project;
-    S.mainFile = config.mainFile;
+    showView('home');
+    await refreshHomeProjects();
+    connectWS();
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function showView(view) {
+  if (view === 'home') {
+    homeScreen.classList.remove('hidden');
+    editorScreen.classList.add('hidden');
+    refreshHomeProjects();
+  } else {
+    homeScreen.classList.add('hidden');
+    editorScreen.classList.remove('hidden');
+  }
+}
+
+async function refreshHomeProjects() {
+  const grid = $('home-projects-list');
+  grid.innerHTML = '<div class="loading">Carregando seus projetos...</div>';
+  try {
+    const list = await api('/api/projects');
+    S.projects = list;
+    grid.innerHTML = '';
+    
+    if (list.length === 0) {
+      grid.innerHTML = '<div class="loading">Ninguém por aqui ainda. Crie seu primeiro projeto acima!</div>';
+      return;
+    }
+
+    list.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'project-card';
+      const date = new Date(p.mtime).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+      
+      card.onclick = () => selectProject(p.name);
+      
+      card.innerHTML = `
+        <div class="project-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+        </div>
+        <span class="project-name">${p.name}</span>
+        <span class="project-meta">Modificado em ${date}</span>
+        <div class="card-actions">
+          <button class="icon-btn btn-delete" title="Excluir" data-name="${p.name}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+          </button>
+        </div>
+      `;
+
+      // Use modern event logic to prevent conflicts
+      card.querySelector('.btn-delete').onclick = (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const n = e.currentTarget.getAttribute('data-name');
+        console.log('Delete button clicked for:', n);
+        deleteProject(n);
+      };
+
+      grid.appendChild(card);
+    });
+  } catch (err) {
+    grid.innerHTML = `<div class="loading">Erro: ${err.message}</div>`;
+  }
+}
+
+async function loadProject(projectName, fileToLoad = null) {
+  try {
+    S.project = projectName;
+    
+    // Get file info
+    const files = await api(`/api/projects/${encodeURIComponent(S.project)}/files`);
+    const mainTex = files.find(f => f.name.endsWith('.tex'));
+    S.mainFile = fileToLoad || (mainTex ? mainTex.name : 'main.tex');
 
     $('file-name').textContent = S.mainFile;
+    
+    // Reset editor UI
+    S.pdf = null;
+    S.pdfUrl = null;
+    pdfPages.innerHTML = '';
+    pdfEmpty.classList.remove('hidden');
+    logContent.textContent = '';
+    logPanel.classList.remove('open');
 
     // Load file content
     const data = await api(`/api/projects/${encodeURIComponent(S.project)}/files/${encodeURIComponent(S.mainFile)}`);
@@ -62,16 +176,173 @@ async function initApp() {
     editor.value = S.content;
     renderLineNums();
     updateSaveStatus('saved');
-
-    connectWS();
     
-    // Attempt initial compile
+    await refreshProjectFiles();
+    showView('editor');
     compile();
   } catch (err) {
-    editor.value = 'Erro ao carregar projeto: ' + err.message;
-    console.error(err);
+    toast('Erro ao carregar projeto: ' + err.message, 'err');
   }
 }
+
+async function refreshProjectFiles() {
+  if (!S.project) return;
+  try {
+    const list = await api(`/api/projects/${encodeURIComponent(S.project)}/files`);
+    S.files = list;
+    renderFileList();
+  } catch (err) {
+    console.error('refreshProjectFiles err:', err);
+  }
+}
+
+function renderFileList() {
+  const listEl = $('file-list');
+  listEl.innerHTML = '';
+  
+  // Sort files: folders first, then files
+  const sorted = [...S.files].sort((a,b) => {
+    if (a.type === 'folder' && b.type !== 'folder') return -1;
+    if (a.type !== 'folder' && b.type === 'folder') return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  sorted.forEach(f => {
+    const item = document.createElement('div');
+    item.className = 'file-item' + (S.mainFile === f.name ? ' active' : '');
+    
+    const icon = f.type === 'text' ? 
+      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>` :
+      f.type === 'pdf' ?
+      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>` :
+      f.type === 'image' ?
+      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>` :
+      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>`;
+
+    item.innerHTML = `${icon}<span>${f.name}</span>`;
+    item.onclick = () => switchFile(f.name, f.type);
+    listEl.appendChild(item);
+  });
+}
+
+async function switchFile(name, type) {
+  if (S.dirty) {
+    if (!confirm('Alterações não salvas serão perdidas. Trocar de arquivo mesmo assim?')) return;
+  }
+  
+  const imgPrev = $('image-preview');
+  const txtArea = editor;
+  const lNums = lineNums;
+
+  if (type === 'image') {
+    const url = `/api/projects/${encodeURIComponent(S.project)}/files/${encodeURIComponent(name)}`;
+    imgPrev.innerHTML = `<img src="${url}?t=${Date.now()}" alt="${name}">`;
+    imgPrev.classList.remove('hidden');
+    txtArea.classList.add('hidden');
+    lNums.classList.add('hidden');
+    
+    S.mainFile = name;
+    $('file-name').textContent = name;
+    renderFileList();
+    return;
+  }
+
+  if (type === 'text') {
+    try {
+      const data = await api(`/api/projects/${encodeURIComponent(S.project)}/files/${encodeURIComponent(name)}`);
+      imgPrev.classList.add('hidden');
+      txtArea.classList.remove('hidden');
+      lNums.classList.remove('hidden');
+      
+      S.mainFile = name;
+      S.content = data.content || '';
+      editor.value = S.content;
+      $('file-name').textContent = name;
+      S.dirty = false;
+      updateSaveStatus('saved');
+      renderLineNums();
+      renderFileList();
+    } catch (err) {
+      toast('Erro ao carregar arquivo: ' + err.message, 'err');
+    }
+  }
+}
+
+// ─── UPLOAD ───
+$('btn-upload-trigger').onclick = () => $('file-upload-input').click();
+
+$('file-upload-input').onchange = async (e) => {
+  const files = e.target.files;
+  if (!files.length) return;
+  
+  const formData = new FormData();
+  for (let f of files) formData.append('files', f);
+  
+  try {
+    await api(`/api/projects/${encodeURIComponent(S.project)}/upload`, {
+      method: 'POST',
+      body: formData
+    });
+    toast(`Sucesso: ${files.length} arquivos carregados`);
+    await refreshProjectFiles();
+  } catch (err) {
+    toast('Erro no upload: ' + err.message, 'err');
+  }
+  e.target.value = ''; // Reset input
+};
+
+window.selectProject = (name) => loadProject(name);
+
+// ─── ACTIONS ───
+
+// ─── ACTIONS ───
+
+async function createNewProjectFromHome() {
+  const input = $('home-new-project-name');
+  const name = input.value.trim();
+  if (!name) return;
+  try {
+    const res = await api('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    input.value = '';
+    toast('Projeto criado com sucesso');
+    // Load the project to switch to editor
+    await loadProject(name);
+  } catch (err) {
+    toast('Erro: ' + err.message, 'err');
+    console.error('CreateProject error:', err);
+    await refreshHomeProjects();
+  }
+}
+
+$('home-btn-create').onclick = createNewProjectFromHome;
+
+$('home-new-project-name').onkeydown = (e) => {
+  if (e.key === 'Enter') createNewProjectFromHome();
+};
+
+window.deleteProject = async (name) => {
+  if (!confirm(`Excluir o projeto "${name}" permanentemente?`)) return;
+  try {
+    await api(`/api/projects/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    toast('Projeto excluído');
+    await refreshHomeProjects();
+  } catch (err) {
+    toast('Erro: ' + err.message, 'err');
+    console.error('DeleteProject error:', err);
+  }
+};
+
+$('btn-back-home').onclick = () => {
+  if (S.dirty) {
+    if (!confirm('Alterações não salvas serão perdidas. Sair?')) return;
+  }
+  S.dirty = false;
+  showView('home');
+};
 
 // ════════════════════════════════════
 //  WEBSOCKET
@@ -107,8 +378,7 @@ editor.addEventListener('scroll', () => {
 });
 
 editor.addEventListener('keydown', e => {
-  // Tab -> 2 spaces
-  if (e.key === 'Tab') {
+  if (e.key === 'Tab' && !S.autocomplete.visible) {
     e.preventDefault();
     const s = editor.selectionStart, en = editor.selectionEnd;
     editor.value = editor.value.slice(0,s) + '  ' + editor.value.slice(en);
@@ -116,13 +386,41 @@ editor.addEventListener('keydown', e => {
     S.content = editor.value;
     if (!S.dirty) { S.dirty = true; updateSaveStatus('dirty'); }
     renderLineNums();
+    return;
   }
-  // Ctrl+S -> Save & Compile
+
+  // ─── AUTOCOMPLETE CONTROLS ───
+  if (S.autocomplete.visible) {
+    const list = S.autocomplete.list;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      S.autocomplete.index = (S.autocomplete.index + 1) % list.length;
+      updateAutocompleteUI();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      S.autocomplete.index = (S.autocomplete.index - 1 + list.length) % list.length;
+      updateAutocompleteUI();
+      return;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      if (list.length > 0) {
+        e.preventDefault();
+        insertCommand(list[S.autocomplete.index]);
+        return;
+      }
+    }
+    if (e.key === 'Escape') {
+      hideAutocomplete();
+      return;
+    }
+  }
+
   if ((e.ctrlKey || e.metaKey) && e.key === 's') {
     e.preventDefault();
     saveFile().then(() => compile());
   }
-  // Ctrl+Enter
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault();
     compile();
@@ -133,6 +431,156 @@ function renderLineNums() {
   const n = (editor.value.match(/\n/g) || []).length + 1;
   lineNums.textContent = Array.from({length: n}, (_, i) => i + 1).join('\n');
 }
+
+// ════════════════════════════════════
+//  AUTOCOMPLETE LOGIC
+// ════════════════════════════════════
+
+const dropdown = document.createElement('div');
+dropdown.className = 'autocomplete-dropdown';
+document.body.appendChild(dropdown);
+
+const ghost = document.createElement('div');
+ghost.id = 'editor-ghost';
+document.body.appendChild(ghost);
+
+editor.addEventListener('input', (e) => {
+  const text = editor.value;
+  const pos = editor.selectionStart;
+  
+  // Find backslash before cursor
+  const lastSlash = text.lastIndexOf('\\', pos - 1);
+  
+  if (lastSlash !== -1 && pos - lastSlash <= 15) { // Limit length for auto-trigger
+    const q = text.substring(lastSlash + 1, pos);
+    // Ensure only letters are in the query
+    if (/^[a-zA-Z]*$/.test(q)) {
+      showAutocomplete(q, lastSlash, pos);
+    } else {
+      hideAutocomplete();
+    }
+  } else {
+    hideAutocomplete();
+  }
+});
+
+function showAutocomplete(q, start, end) {
+  const matches = LATEX_COMMANDS.filter(cmd => cmd.startsWith(q.toLowerCase()));
+  if (matches.length === 0) {
+    hideAutocomplete();
+    return;
+  }
+
+  S.autocomplete.visible = true;
+  S.autocomplete.query = q;
+  S.autocomplete.list = matches;
+  S.autocomplete.index = 0;
+  S.autocomplete.start = start;
+  S.autocomplete.end = end;
+
+  renderAutocompleteList(matches);
+  positionAutocomplete();
+}
+
+function hideAutocomplete() {
+  S.autocomplete.visible = false;
+  dropdown.style.display = 'none';
+}
+
+function renderAutocompleteList(list) {
+  dropdown.innerHTML = '';
+  list.forEach((cmd, i) => {
+    const item = document.createElement('div');
+    item.className = 'autocomplete-item' + (i === S.autocomplete.index ? ' active' : '');
+    item.innerHTML = `<span class="cmd-prefix">\\</span>${cmd}`;
+    item.onclick = () => insertCommand(cmd);
+    dropdown.appendChild(item);
+  });
+  dropdown.style.display = 'block';
+}
+
+function updateAutocompleteUI() {
+  const items = dropdown.querySelectorAll('.autocomplete-item');
+  items.forEach((it, i) => {
+    it.className = 'autocomplete-item' + (i === S.autocomplete.index ? ' active' : '');
+    if (i === S.autocomplete.index) it.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+function insertCommand(cmd) {
+  const s = S.autocomplete.start;
+  const e = S.autocomplete.end;
+  const text = editor.value;
+  
+  // Insert with backslash
+  const replacement = '\\' + cmd;
+  editor.value = text.substring(0, s) + replacement + text.substring(e);
+  
+  const newPos = s + replacement.length;
+  editor.selectionStart = editor.selectionEnd = newPos;
+  
+  S.content = editor.value;
+  if (!S.dirty) { S.dirty = true; updateSaveStatus('dirty'); }
+  renderLineNums();
+  hideAutocomplete();
+  editor.focus();
+}
+
+function positionAutocomplete() {
+  const text = editor.value;
+  const pos = S.autocomplete.start;
+  
+  // Get style from editor
+  const styles = window.getComputedStyle(editor);
+  const properties = [
+    'font-family', 'font-size', 'line-height', 'padding', 'width', 'box-sizing', 
+    'border', 'text-transform', 'letter-spacing', 'word-spacing', 'white-space'
+  ];
+  
+  properties.forEach(p => ghost.style[p] = styles[p]);
+  
+  // Set text up to cursor, and a marker
+  ghost.textContent = text.substring(0, pos);
+  const span = document.createElement('span');
+  span.textContent = '|';
+  ghost.appendChild(span);
+  
+  // Position the ghost
+  const rect = editor.getBoundingClientRect();
+  ghost.style.top = rect.top + 'px';
+  ghost.style.left = rect.left + 'px';
+  ghost.style.width = styles.width;
+  ghost.style.height = styles.height;
+  ghost.scrollTop = editor.scrollTop;
+  ghost.scrollLeft = editor.scrollLeft;
+  
+  const spanRect = span.getBoundingClientRect();
+  
+  // Constrain dropdown to viewport
+  let top = spanRect.bottom + 2;
+  let left = spanRect.left;
+  
+  // Make sure it doesn't go off screen
+  const dropdownWidth = 180;
+  const dropdownHeight = 200;
+  
+  if (left + dropdownWidth > window.innerWidth) {
+    left = window.innerWidth - dropdownWidth - 10;
+  }
+  if (top + dropdownHeight > window.innerHeight) {
+    top = spanRect.top - dropdownHeight - 2;
+  }
+
+  dropdown.style.top = top + 'px';
+  dropdown.style.left = left + 'px';
+}
+
+// Close autocomplete on click outside
+document.addEventListener('mousedown', (e) => {
+  if (!dropdown.contains(e.target) && e.target !== editor) {
+    hideAutocomplete();
+  }
+});
 
 // ════════════════════════════════════
 //  SAVE
@@ -174,7 +622,6 @@ function updateSaveStatus(state) {
 // ════════════════════════════════════
 async function compile() {
   if (S.compiling || !S.project) return;
-  
   if (S.dirty) await saveFile();
 
   S.compiling = true;
@@ -192,7 +639,6 @@ async function compile() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mainFile: S.mainFile })
     });
-    // Handled by compile_done websocket message
   } catch (err) {
     finishCompile(false, null);
     toast('Erro: ' + err.message, 'err');
@@ -213,10 +659,7 @@ function finishCompile(success, pdfFile) {
     compileBadge.className = 'compile-badge ok';
     toast('Compilação concluída', 'ok');
     $('btn-download').disabled = false;
-    
-    // Keep log open shortly, then close if success
     setTimeout(() => { if (!S.compiling) logPanel.classList.remove('open'); }, 2000);
-    
     loadPDF(pdfFile);
   } else {
     compileBadge.textContent = 'Erro';
@@ -252,27 +695,19 @@ async function renderAllPages() {
   for (let i = 1; i <= total; i++) {
     const page = await S.pdf.getPage(i);
     const viewport = page.getViewport({ scale: S.pdfZoom });
-
     const wrap = document.createElement('div');
     wrap.className = 'pdf-page-wrap';
-
     const num = document.createElement('div');
     num.className = 'pdf-page-num';
     num.textContent = `${i} / ${total}`;
     wrap.appendChild(num);
-
     const canvas = document.createElement('canvas');
     canvas.className = 'pdf-page-canvas';
     canvas.width = viewport.width;
     canvas.height = viewport.height;
-    
     wrap.appendChild(canvas);
     pdfPages.appendChild(wrap);
-
-    await page.render({
-      canvasContext: canvas.getContext('2d'),
-      viewport
-    }).promise;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
   }
 }
 
@@ -294,18 +729,15 @@ $('btn-download').onclick = () => {
 const splitHandle = $('split-handle');
 const editorPanel = $('editor-panel');
 splitHandle.addEventListener('mousedown', e0 => {
-  const sx = e0.clientX;
-  const sw = editorPanel.offsetWidth;
+  const sx = e0.clientX, sw = editorPanel.offsetWidth;
   splitHandle.classList.add('active');
   document.body.style.cursor = 'col-resize';
   document.body.style.userSelect = 'none';
-
   const onMove = e => {
     const w = sw + (e.clientX - sx);
     editorPanel.style.width = Math.max(200, Math.min(window.innerWidth - 200, w)) + 'px';
-    if (S.pdf) renderAllPages().catch(()=>{}); // re-render PDF if needed, though pure CSS scale might be smoother
+    if (S.pdf) renderAllPages().catch(()=>{});
   };
-  
   const onUp = () => {
     splitHandle.classList.remove('active');
     document.body.style.cursor = '';
@@ -313,7 +745,6 @@ splitHandle.addEventListener('mousedown', e0 => {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
   };
-  
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup', onUp);
 });

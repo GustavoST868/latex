@@ -1,10 +1,21 @@
 const express = require('express');
-const { exec, spawn } = require('child_process');
+const { exec, spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const WebSocket = require('ws');
 const multer = require('multer');
+
+// --- Kill existing process on port 3000 ---
+const PORT = process.env.PORT || 3000;
+try {
+  // Tenta liberar a porta caso o servidor tenha travado ou já esteja rodando
+  if (process.platform !== 'win32') {
+    execSync(`fuser -k ${PORT}/tcp 2>/dev/null || true`);
+  }
+} catch (e) {
+  // Silently ignore errors
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -79,13 +90,16 @@ app.get('/api/projects', (req, res) => {
 // Create new project
 app.post('/api/projects', (req, res) => {
   const { name } = req.body;
+  console.log(`[API] Creating project: ${name}`);
   if (!name) return res.status(400).json({ error: 'Project name required' });
   const projectPath = path.join(PROJECTS_DIR, name);
   if (fs.existsSync(projectPath)) return res.status(409).json({ error: 'Project already exists' });
-  fs.mkdirSync(projectPath, { recursive: true });
+  
+  try {
+    fs.mkdirSync(projectPath, { recursive: true });
 
-  // Create default main.tex
-  const defaultTex = `\\documentclass{article}
+    // Create default main.tex
+    const defaultTex = `\\documentclass{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage[brazil]{babel}
 
@@ -102,16 +116,30 @@ Escreva seu texto aqui.
 
 \\end{document}
 `;
-  fs.writeFileSync(path.join(projectPath, 'main.tex'), defaultTex);
-  res.json({ name, created: true });
+    fs.writeFileSync(path.join(projectPath, 'main.tex'), defaultTex);
+    console.log(`[API] Project created successfully: ${name}`);
+    res.json({ name, created: true });
+  } catch (e) {
+    console.error(`[API] Error creating project: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Delete project
 app.delete('/api/projects/:name', (req, res) => {
-  const projectPath = path.join(PROJECTS_DIR, req.params.name);
+  const name = req.params.name;
+  console.log(`[API] Deleting project: ${name}`);
+  const projectPath = path.join(PROJECTS_DIR, name);
   if (!fs.existsSync(projectPath)) return res.status(404).json({ error: 'Not found' });
-  fs.rmSync(projectPath, { recursive: true });
-  res.json({ deleted: true });
+  
+  try {
+    fs.rmSync(projectPath, { recursive: true, force: true });
+    console.log(`[API] Project deleted successfully: ${name}`);
+    res.json({ deleted: true });
+  } catch (e) {
+    console.error(`[API] Error deleting project: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── Files API ────────────────────────────────────────────────────────────────
@@ -249,7 +277,6 @@ app.post('/api/projects/:name/compile', (req, res) => {
 
 // ─── Start server ─────────────────────────────────────────────────────────────
 
-const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   const url = `http://localhost:${PORT}`;
   console.log(`\n🚀 LaTeX Editor rodando em ${url}\n`);
