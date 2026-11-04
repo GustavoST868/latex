@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Editor LaTeX</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <script>
+    // Apply the saved theme before first paint to avoid a flash
+    try {
+      const t = localStorage.getItem('latex.theme') || 'system';
+      const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    } catch (e) {}
+  </script>
+</head>
+
+<body>
+
+  <div id="app">
+
+    <!-- ── HOME SCREEN (Project Selection) ── -->
+    <div id="home-screen" class="view-screen hidden">
+      <div class="home-container">
+        <header class="home-header">
+          <div class="brand-large">
+            <div class="brand-logo large">∑</div>
+            <h1>Editor LaTeX</h1>
+            <p>Seu editor profissional na web</p>
+          </div>
+        </header>
+
+        <main class="home-content">
+          <div class="projects-section">
+            <div class="section-header">
+              <h2>Meus Projetos</h2>
+              <div class="new-project-inline">
+                <input type="text" id="home-new-project-name" placeholder="Novo projeto..." maxlength="100">
+                <button class="btn btn-primary" id="home-btn-create">Criar</button>
+              </div>
+            </div>
+
+            <div id="home-projects-list" class="home-projects-grid">
+              <div class="loading">Carregando seus projetos...</div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- ── EDITOR SCREEN ── -->
+    <div id="editor-screen" class="view-screen hidden">
+      <!-- ── TOOLBAR ── -->
+      <header class="ide-toolbar">
+        <div class="toolbar-left">
+          <button class="brand-logo" id="btn-back-home" title="Voltar para Projetos">∑</button>
+          <nav class="menubar" id="menubar"></nav>
+        </div>
+
+        <div class="toolbar-center">
+          <button class="project-title" id="btn-project-menu" title="Opções do projeto">
+            <span id="project-name">—</span>
+            <span class="ms">expand_more</span>
+          </button>
+        </div>
+
+        <div class="toolbar-right">
+          <span class="save-status" id="save-status"></span>
+          <button class="toolbar-btn" id="btn-layout" title="Layout">
+            <span class="ms">splitscreen_right</span>
+            <span>Layout</span>
+            <span class="ms">expand_more</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="ide-body" id="ide-body">
+        <!-- ── RAIL ── -->
+        <nav class="rail" id="rail">
+          <button class="rail-tab" data-panel="files" title="Arquivos"><span class="ms">description</span></button>
+          <button class="rail-tab" data-panel="search" title="Buscar no projeto (Ctrl+Shift+F)"><span class="ms">search</span></button>
+          <div class="rail-spacer"></div>
+          <button class="rail-tab" id="btn-help" title="Ajuda"><span class="ms">help</span></button>
+          <button class="rail-tab" id="btn-settings" title="Configurações"><span class="ms">settings</span></button>
+        </nav>
+
+        <!-- ── RAIL PANEL ── -->
+        <aside class="rail-panel" id="rail-panel">
+          <section class="panel" id="panel-files">
+            <div class="panel-header">
+              <span>Arquivos</span>
+              <div class="panel-actions">
+                <button class="icon-btn" id="btn-new-file" title="Novo arquivo"><span class="ms">note_add</span></button>
+                <button class="icon-btn" id="btn-upload-trigger" title="Enviar arquivos"><span class="ms">upload</span></button>
+              </div>
+              <input type="file" id="file-upload-input" multiple hidden>
+            </div>
+            <div class="file-list" id="file-list"></div>
+          </section>
+
+          <section class="panel hidden" id="panel-search">
+            <div class="panel-header"><span>Buscar no projeto</span></div>
+            <form class="search-form" id="search-form">
+              <input type="search" id="search-input" placeholder="Buscar…" autocomplete="off">
+              <div class="search-options">
+                <label><input type="checkbox" id="search-case"> Aa</label>
+                <label><input type="checkbox" id="search-regex"> .*</label>
+              </div>
+            </form>
+            <div class="search-results" id="search-results"></div>
+          </section>
+        </aside>
+        <div class="resize-handle" id="rail-handle" title="Arraste para redimensionar"></div>
+
+        <!-- ── EDITOR ── -->
+        <main class="editor-pane" id="editor-pane">
+          <div class="pane-header editor-toolbar" id="editor-toolbar"></div>
+          <div class="breadcrumbs-bar">
+            <span class="breadcrumbs" id="file-name">—</span>
+          </div>
+          <div class="editor-inner" id="editor-inner">
+            <div class="editor-host" id="editor"></div>
+          </div>
+          <!-- Images, PDFs and other non-text files -->
+          <div class="file-view hidden" id="file-view"></div>
+        </main>
+
+        <!-- Divider between editor and PDF (drag or use the arrows) -->
+        <div class="resize-handle split-handle" id="split-handle">
+          <div class="sync-controls">
+            <button class="handle-btn sync-btn" id="btn-sync-pdf" title="Ir para este trecho no PDF"><span class="ms">arrow_forward</span></button>
+            <button class="handle-btn sync-btn" id="btn-sync-code" title="Ir para este trecho do PDF no código (ou dê um duplo clique no PDF)"><span class="ms">arrow_back</span></button>
+          </div>
+          <button class="handle-btn" id="btn-collapse-editor" title="Mostrar só o PDF"><span class="ms">chevron_left</span></button>
+          <button class="handle-btn" id="btn-collapse-pdf" title="Mostrar só o editor"><span class="ms">chevron_right</span></button>
+        </div>
+
+        <!-- ── PDF ── -->
+        <section class="pdf-pane" id="pdf-pane">
+          <div class="pane-header pdf-toolbar">
+            <div class="pdf-toolbar-left">
+              <div class="compile-split">
+                <button class="btn btn-primary btn-compile" id="btn-compile">
+                  <span class="spinner hidden" id="spinner"></span>
+                  <span class="ms" id="compile-icon">refresh</span>
+                  <span id="compile-label">Recompilar</span>
+                </button>
+                <button class="btn btn-primary btn-compile-menu" id="btn-compile-menu" title="Opções de compilação">
+                  <span class="ms">expand_more</span>
+                </button>
+              </div>
+              <button class="icon-btn log-btn" id="btn-log" title="Logs e arquivos de saída">
+                <span class="ms">article</span>
+                <span class="log-badge hidden" id="log-badge"></span>
+              </button>
+              <span class="compile-badge hidden" id="compile-badge"></span>
+              <button class="icon-btn" id="btn-download" title="Baixar PDF" disabled><span class="ms">download</span></button>
+            </div>
+            <div class="pdf-toolbar-right">
+              <span class="page-nav">
+                <input class="page-input" id="page-input" type="text" inputmode="numeric" aria-label="Página atual" disabled>
+                <span class="page-count" id="page-count"></span>
+              </span>
+              <button class="icon-btn" id="btn-zoom-out" title="Diminuir zoom (Ctrl+roda do mouse)"><span class="ms">remove</span></button>
+              <button class="zoom-btn" id="btn-zoom-menu" title="Zoom"><span id="zoom-label">100%</span><span class="ms">expand_more</span></button>
+              <button class="icon-btn" id="btn-zoom-in" title="Aumentar zoom (Ctrl+roda do mouse)"><span class="ms">add</span></button>
+              <button class="icon-btn" id="btn-pdf-menu" title="Mais opções do PDF"><span class="ms">more_vert</span></button>
+            </div>
+          </div>
+          <div class="pdf-body">
+            <div class="pdf-scroll" id="pdf-scroll">
+              <div class="pdf-empty" id="pdf-empty">
+                <span class="ms">picture_as_pdf</span>
+                <p>Clique em <strong>Recompilar</strong></p>
+                <p class="sub">ou pressione Ctrl + Enter</p>
+              </div>
+              <div class="pdfViewer" id="pdf-pages"></div>
+            </div>
+            <!-- Logs replace the PDF view while open, like Overleaf -->
+            <div class="log-panel" id="log-panel">
+              <div class="log-header">
+                <div class="log-filters" id="log-filters"></div>
+                <button class="icon-btn" id="btn-close-log" title="Voltar ao PDF"><span class="ms">close</span></button>
+              </div>
+              <div class="log-body">
+                <div class="log-entries" id="log-entries"></div>
+                <pre class="log-content hidden" id="log-content"></pre>
+              </div>
+              <div class="log-footer">
+                <button class="btn btn-ghost" id="btn-raw-log"><span class="ms">terminal</span><span>Log bruto</span></button>
+                <button class="btn btn-ghost" id="btn-output-files"><span class="ms">folder_open</span><span>Outros logs e arquivos</span><span class="ms">expand_more</span></button>
+                <span class="tb-spacer"></span>
+                <button class="btn btn-ghost" id="btn-clear-cache" title="Apaga os arquivos auxiliares (.aux, .bbl…) e força uma compilação completa"><span class="ms">delete_sweep</span><span>Limpar cache</span></button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Floating menus and dialogs -->
+  <div class="menu-popover hidden" id="menu-popover" role="menu"></div>
+  <div class="modal-backdrop hidden" id="modal-backdrop">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3 id="modal-title"></h3>
+        <button class="icon-btn" id="modal-close" title="Fechar"><span class="ms">close</span></button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer" id="modal-footer"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>

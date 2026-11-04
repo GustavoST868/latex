@@ -70,7 +70,15 @@ Ao criar um novo projeto pela interface web, o usuário recebe um template bási
 
 Para utilizar o projeto completo, é necessário ter o Node.js instalado para executar a aplicação web, além da distribuição TeX Live completa para compilar os documentos. O arquivo `package.json` lista as dependências da aplicação web: Express para o servidor HTTP, Multer para upload de arquivos e WebSocket para comunicação em tempo real.
 
-O frontend utiliza PDF.js via CDN para renderização dos PDFs, eliminando a necessidade de instalação adicional. As fontes Inter e JetBrains Mono são carregadas do Google Fonts, proporcionando uma tipografia moderna e legível tanto no texto corrido quanto no código.
+O frontend fica em `webapp/client/` e é empacotado com o Vite em `webapp/dist/`. O PDF.js vem do pacote `pdfjs-dist`, instalado pelo npm. A compilação usa o `latexmk`, que roda `bibtex`/`biber` e `makeindex` quando necessário e guarda os arquivos auxiliares em `.output/`, dentro de cada projeto. As configurações de cada projeto (documento principal, compilador e shell-escape) ficam em `.project.json`. As fontes Inter e JetBrains Mono são carregadas do Google Fonts.
+
+### Como executar
+
+```bash
+./run.sh            # instala dependências, compila o frontend e inicia em http://localhost:3000
+```
+
+Para desenvolver o frontend com recarga automática, rode `npm run server` e `npm run dev` em `webapp/` (o Vite encaminha `/api` e `/ws` para o servidor). Variáveis opcionais: `PORT`, `HOST` (padrão `127.0.0.1`), `PROJECTS_DIR` e `NO_OPEN=1`.
 
 ---
 
