@@ -3,6 +3,8 @@ import { S } from './state.js';
 import { api, projectUrl, outputUrl } from './api.js';
 import { openMenu } from './menu.js';
 import { openFileAtLine } from './project.js';
+import { askAboutLogEntry } from './chat.js';
+import { aiEnabled } from './ai.js';
 
 const logPanel = $('log-panel');
 const entriesEl = $('log-entries');
@@ -81,6 +83,7 @@ export function setLogResult({ entries, rawLog, outputFiles }) {
 }
 
 export const countErrors = () => state.entries.filter(e => e.level === 'error').length;
+export const getLogEntries = () => state.entries;
 
 function renderBadge() {
   const errors = countErrors();
@@ -117,6 +120,11 @@ function entryCard(e) {
       icon(LEVELS[e.level].icon),
       el('span', { className: 'log-entry-title' }, e.message),
       location),
+    e.level !== 'typesetting' && aiEnabled() ? el('button', {
+      className: 'link-btn log-ask-ai',
+      title: 'Pedir ao assistente de IA uma explicação e uma correção',
+      onclick: () => askAboutLogEntry(e),
+    }, icon('auto_awesome'), 'Perguntar à IA') : null,
     hint ? el('p', { className: 'log-entry-hint' }, hint) : null,
     e.content && e.content !== e.message ? el('pre', { className: 'log-entry-content' }, e.content) : null,
   );

@@ -1,0 +1,11 @@
+{
+  "name": "Editor LaTeX",
+  "short_name": "Editor LaTeX",
+  "description": "Editor de LaTeX no estilo Overleaf, rodando no seu computador",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1b222c",
+  "theme_color": "#098842",
+  "lang": "pt-BR",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

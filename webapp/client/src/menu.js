@@ -5,9 +5,10 @@ let current = null; // { anchor, onClose }
 
 /**
  * Opens a dropdown under `anchor`.
- * items: { label, icon, shortcut, action, disabled, checked } | '-' | { heading }
+ * items: { label, icon, shortcut, action, disabled, checked, danger } | '-' | { heading }
+ * `at: {x, y}` places it at a point instead (context menus).
  */
-export function openMenu(anchor, items, { align = 'left', placement = 'below', onClose = null } = {}) {
+export function openMenu(anchor, items, { align = 'left', placement = 'below', at = null, onClose = null } = {}) {
   closeMenu();
   const hasChecks = items.some(i => i && i.checked !== undefined);
 
@@ -15,7 +16,7 @@ export function openMenu(anchor, items, { align = 'left', placement = 'below', o
     if (item === '-') return el('div', { className: 'menu-sep' });
     if (item.heading) return el('div', { className: 'menu-heading' }, item.heading);
     return el('button', {
-      className: 'menu-item' + (item.checked ? ' checked' : ''),
+      className: 'menu-item' + (item.checked ? ' checked' : '') + (item.danger ? ' danger' : ''),
       role: 'menuitem',
       disabled: !!item.disabled,
       onclick: () => { closeMenu(); item.action(); },
@@ -31,7 +32,11 @@ export function openMenu(anchor, items, { align = 'left', placement = 'below', o
   const r = anchor.getBoundingClientRect();
   const w = pop.offsetWidth, h = pop.offsetHeight;
   let left, top;
-  if (placement === 'right') {
+  if (at) {
+    // Context menus open at the mouse pointer
+    left = at.x;
+    top = at.y;
+  } else if (placement === 'right') {
     left = r.right + 4;
     top = r.top;
   } else {

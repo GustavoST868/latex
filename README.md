@@ -72,13 +72,40 @@ Para utilizar o projeto completo, é necessário ter o Node.js instalado para ex
 
 O frontend fica em `webapp/client/` e é empacotado com o Vite em `webapp/dist/`. O PDF.js vem do pacote `pdfjs-dist`, instalado pelo npm. A compilação usa o `latexmk`, que roda `bibtex`/`biber` e `makeindex` quando necessário e guarda os arquivos auxiliares em `.output/`, dentro de cada projeto. As configurações de cada projeto (documento principal, compilador e shell-escape) ficam em `.project.json`. As fontes Inter e JetBrains Mono são carregadas do Google Fonts.
 
-### Como executar
+### Instalar como aplicativo (Linux)
+
+```bash
+./instalar.sh
+```
+
+O instalador copia o app para `~/.local/share/editor-latex`, cria o comando `editor-latex` e adiciona **Editor LaTeX** ao menu de aplicativos (e à área de trabalho). O app abre em uma janela própria, usando o Chrome, o Chromium, o Edge ou o Brave, com ícone próprio. O servidor local inicia sozinho e encerra cerca de 20 segundos depois que a última janela fecha. Os projetos ficam em `~/Documentos/Projetos-LaTeX`; para usar outra pasta, rode `PASTA_PROJETOS=/outra/pasta ./instalar.sh`. Rodar o instalador de novo atualiza o app sem mexer nos projetos, e `./desinstalar.sh` remove o app mas mantém os projetos.
+
+### Como executar sem instalar
 
 ```bash
 ./run.sh            # instala dependências, compila o frontend e inicia em http://localhost:3000
 ```
 
-Para desenvolver o frontend com recarga automática, rode `npm run server` e `npm run dev` em `webapp/` (o Vite encaminha `/api` e `/ws` para o servidor). Variáveis opcionais: `PORT`, `HOST` (padrão `127.0.0.1`), `PROJECTS_DIR` e `NO_OPEN=1`.
+Para desenvolver o frontend com recarga automática, rode `npm run server` e `npm run dev` em `webapp/` (o Vite encaminha `/api` e `/ws` para o servidor). Variáveis opcionais: `PORT`, `HOST` (padrão `127.0.0.1`), `PROJECTS_DIR`, `NO_OPEN=1`, `EXIT_WHEN_IDLE=<segundos>`, que encerra o servidor quando não há janelas abertas, e `OLLAMA_URL` (padrão `http://127.0.0.1:11434`). O servidor recusa requisições e conexões vindas de outros sites abertos no navegador.
+
+### Recursos no estilo Overleaf
+
+- **Painel de projetos:** filtros Todos, Arquivados e Lixeira; tags; busca; ordenação; ações em lote. Também cria projetos a partir de modelos (em branco, exemplo, artigo, Beamer, ABNT/abnTeX2 e carta), de um `.zip` ou de um repositório Git.
+- **Árvore de arquivos:** pastas; menu do botão direito; renomear; mover arrastando; enviar arquivos arrastando do computador; definir o documento principal. A árvore se atualiza quando um arquivo muda fora do app.
+- **Sumário do arquivo (Outline):** mostra as seções do arquivo aberto e destaca a seção em que o cursor está.
+- **Histórico de versões:** cada projeto guarda versões automáticas em `.history/`, um repositório Git interno e invisível. As versões são criadas ao compilar e a cada 5 minutos de edição. Você pode ver as diferenças, dar nome a uma versão e restaurar um arquivo ou o projeto inteiro.
+- **Integração com Git:** commit, pull e push de projetos que são repositórios Git, pelo painel "Git".
+- **Configurações:** abas Editor (que inclui os modos Vim e Emacs), Compilador e Aparência (tema do editor, fonte e espaçamento).
+- **Paleta de comandos:** `Ctrl+K`.
+
+### Assistente de IA (Ollama)
+
+O assistente usa modelos que rodam no seu computador pelo [Ollama](https://ollama.com), então o texto dos projetos não sai da máquina. Com o Ollama instalado, baixe um modelo (por exemplo, `ollama pull qwen3.5:9b`) e abra o painel **Assistente de IA** (ícone ✨ na barra lateral).
+
+- **Chat:** responde perguntas sobre LaTeX e sobre o documento. Junto com cada pergunta vai a seleção ou o trecho perto do cursor (ou o arquivo inteiro, se você escolher). Cada bloco de código da resposta tem os botões *Inserir no editor* e *Copiar*.
+- **Edição no editor (`Ctrl+J`):** selecione um trecho (ou deixe o cursor onde quer escrever), pressione `Ctrl+J` ou clique em *Editar com IA* e diga o que fazer. A proposta aparece embaixo do trecho original, riscado: `Ctrl+Enter` aceita e `Esc` descarta. Dá para desfazer com `Ctrl+Z`.
+- **Erros de compilação:** cada erro do log tem o botão *Perguntar à IA*, que envia a mensagem junto com as linhas do código onde o erro aconteceu.
+- **Configurações → IA:** liga/desliga o assistente, escolhe o modelo, ativa o raciocínio (melhor, porém mais lento) e define o contexto enviado no chat.
 
 ---
 

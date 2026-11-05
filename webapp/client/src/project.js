@@ -1,15 +1,21 @@
-import { $, el, toast, showView, download, openModal, promptModal } from './util.js';
+import { $, el, toast, showView, download, openModal, promptModal, confirmModal } from './util.js';
 import { S } from './state.js';
 import { api, json, projectUrl, fileUrl } from './api.js';
-import { setEditorContent, stashEditorState, clearEditorStates, saveFile, updateSaveStatus, goToLine } from './editor.js';
+import {
+  setEditorContent, stashEditorState, clearEditorStates, saveFile, updateSaveStatus, goToLine, replaceContentExternally,
+} from './editor.js';
 import { scheduleMetaRefresh, clearMeta } from './meta.js';
-import { renderFileTree, findEntry, firstTextFile } from './filetree.js';
+import { renderFileTree, initFileTree, findEntry, firstTextFile, parentOf } from './filetree.js';
+import { openMenu } from './menu.js';
+import { refreshOutline } from './outline.js';
+import { resetHistory } from './history.js';
 import { compile, clearCompileState, updateCompileTarget } from './compile.js';
 import { resetPDF } from './pdf.js';
 import { joinProject } from './ws.js';
 import { resetDetached } from './layout.js';
 import { clearSearch } from './search.js';
 import { joinSyncChannel } from './synctex.js';
+import { resetChat } from './chat.js';
 
 const editorInner = $('editor-inner');
 const fileView = $('file-view');
@@ -33,8 +39,10 @@ export async function loadProject(name) {
     resetPDF();
     clearCompileState();
     clearSearch();
+    resetHistory();
     setProjectTitle();
     joinSyncChannel();
+    resetChat();
 
     const [settings] = await Promise.all([api(`${projectUrl()}/settings`), refreshFiles()]);
     S.settings = settings;
@@ -58,15 +66,18 @@ export async function closeProject() {
   try {
     await saveFile();
   } catch {
-    if (!confirm('Não foi possível salvar as alterações. Sair mesmo assim?')) return false;
+    const leave = await confirmModal({ title: 'Erro ao salvar', message: 'Não foi possível salvar as alterações. Sair mesmo assim?', confirmLabel: 'Sair sem salvar', danger: true });
+    if (!leave) return false;
   }
   resetDetached();
+  resetHistory();
   clearEditorStates();
   clearMeta();
   S.project = null;
   S.openFile = null;
   S.dirty = false;
   joinProject(null);
+  resetChat();
   resetPDF();
   setProjectTitle();
   return true;
@@ -78,6 +89,7 @@ function showEmptyEditor() {
   $('file-name').textContent = 'Nenhum arquivo aberto';
   updateSaveStatus('');
   refreshTree();
+  refreshOutline();
 }
 
 export async function renameProject() {
@@ -154,14 +166,39 @@ export function refreshTree() {
     activePath: S.openFile?.path,
     mainFile: S.settings?.mainFile,
     expanded: S.expanded,
-    onOpen: entry => openFile(entry),
-    onToggle: path => {
-      S.expanded.has(path) ? S.expanded.delete(path) : S.expanded.add(path);
-      refreshTree();
-    },
-    onDelete: entry => deleteEntry(entry),
-    onSetMain: entry => setMainFile(entry.path),
   });
+}
+
+function toggleFolder(path) {
+  S.expanded.has(path) ? S.expanded.delete(path) : S.expanded.add(path);
+  refreshTree();
+}
+
+// Right-click menu (entry is null for the empty area of the tree)
+function entryMenu(entry, at) {
+  const folder = entry ? (entry.type === 'folder' ? entry.path : parentOf(entry.path)) : '';
+  const items = [];
+  if (entry && entry.type !== 'folder') {
+    items.push({ label: 'Abrir', icon: 'open_in_new', action: () => openFile(entry) });
+    if (entry.name.endsWith('.tex') && entry.path !== S.settings?.mainFile) {
+      items.push({ label: 'Definir como documento principal', icon: 'star', action: () => setMainFile(entry.path) });
+    }
+    items.push({ label: 'Baixar', icon: 'download', action: () => download(fileUrl(entry.path) + '?raw', entry.name) });
+    items.push('-');
+  }
+  items.push(
+    { label: folder ? `Novo arquivo em ${folder}` : 'Novo arquivo', icon: 'note_add', action: () => createNewFile(folder) },
+    { label: folder ? `Nova pasta em ${folder}` : 'Nova pasta', icon: 'create_new_folder', action: () => createFolder(folder) },
+    { label: folder ? `Enviar arquivos para ${folder}` : 'Enviar arquivos', icon: 'upload', action: () => triggerUpload(folder) },
+  );
+  if (entry) {
+    items.push(
+      '-',
+      { label: 'Renomear', icon: 'edit', action: () => renameEntry(entry) },
+      { label: 'Excluir', icon: 'delete', danger: true, action: () => deleteEntry(entry) },
+    );
+  }
+  openMenu($('file-list'), items, { at });
 }
 
 // Expands every folder above a file so it's visible in the tree
@@ -175,7 +212,8 @@ export async function openFile(entry) {
   try {
     await saveFile();
   } catch {
-    if (!confirm('Não foi possível salvar as alterações. Trocar de arquivo mesmo assim?')) return;
+    const proceed = await confirmModal({ title: 'Erro ao salvar', message: 'Não foi possível salvar as alterações. Trocar de arquivo mesmo assim?', confirmLabel: 'Trocar sem salvar', danger: true });
+    if (!proceed) return;
   }
 
   const url = fileUrl(entry.path);
@@ -212,6 +250,7 @@ export async function openFile(entry) {
   $('file-name').textContent = entry.path.split('/').join(' › ');
   revealInTree(entry.path);
   refreshTree();
+  refreshOutline();
 }
 
 export async function openFileAtLine(path, line) {
@@ -237,18 +276,25 @@ async function setMainFile(path) {
   if (await updateSettings({ mainFile: path })) toast(`Documento principal: ${path}`);
 }
 
-export async function createNewFile() {
+// "a/b.tex" typed by the user, relative to `folder`; null when invalid
+function joinPath(folder, name) {
+  const path = [folder, name.replace(/^\/+/, '')].filter(Boolean).join('/');
+  if (!name || path.split('/').some(s => !s || s.startsWith('.'))) {
+    toast('Nome inválido: não use nomes vazios nem começados por "."', 'err');
+    return null;
+  }
+  return path;
+}
+
+export async function createNewFile(folder = '') {
   const name = await promptModal({
-    title: 'Novo arquivo',
+    title: folder ? `Novo arquivo em ${folder}` : 'Novo arquivo',
     label: 'Nome do arquivo (ex: capitulo1.tex ou capitulos/cap1.tex)',
     confirmLabel: 'Criar',
   });
   if (!name) return;
-  const path = name.replace(/^\/+/, '');
-  if (!path || path.split('/').some(s => !s || s.startsWith('.'))) {
-    toast('Nome de arquivo inválido', 'err');
-    return;
-  }
+  const path = joinPath(folder, name);
+  if (!path) return;
   if (findEntry(S.files, path)) {
     toast('Já existe um arquivo com esse nome', 'err');
     return;
@@ -265,6 +311,59 @@ export async function createNewFile() {
   }
 }
 
+export async function createFolder(folder = '') {
+  const name = await promptModal({
+    title: folder ? `Nova pasta em ${folder}` : 'Nova pasta',
+    label: 'Nome da pasta',
+    confirmLabel: 'Criar',
+  });
+  if (!name) return;
+  const path = joinPath(folder, name);
+  if (!path) return;
+  try {
+    await api(`${projectUrl()}/folders`, json('POST', { path }));
+    S.expanded.add(path);
+    revealInTree(path);
+    await refreshFiles();
+  } catch (err) {
+    toast('Erro: ' + err.message, 'err');
+  }
+}
+
+// Moves/renames on the server, keeping the open file and expanded folders in sync
+async function moveEntry(entry, to) {
+  if (to === entry.path) return;
+  try {
+    await saveFile();
+    await api(`${projectUrl()}/move`, json('POST', { from: entry.path, to }));
+    const rebase = p => (p === entry.path || p.startsWith(entry.path + '/') ? to + p.slice(entry.path.length) : p);
+    if (S.openFile) {
+      S.openFile.path = rebase(S.openFile.path);
+      $('file-name').textContent = S.openFile.path.split('/').join(' › ');
+    }
+    S.expanded = new Set([...S.expanded].map(rebase));
+    revealInTree(to);
+    S.settings = await api(`${projectUrl()}/settings`);
+    updateCompileTarget();
+    await refreshFiles();
+  } catch (err) {
+    toast('Erro: ' + err.message, 'err');
+  }
+}
+
+async function renameEntry(entry) {
+  const name = await promptModal({
+    title: entry.type === 'folder' ? 'Renomear pasta' : 'Renomear arquivo',
+    label: 'Novo nome',
+    value: entry.name,
+    confirmLabel: 'Renomear',
+  });
+  if (!name || name === entry.name) return;
+  if (name.includes('/')) return toast('Use arrastar e soltar para mover para outra pasta', 'err');
+  const path = joinPath(parentOf(entry.path), name);
+  if (path) await moveEntry(entry, path);
+}
+
 async function deleteEntry(entry) {
   const main = S.settings?.mainFile;
   const isFolder = entry.type === 'folder';
@@ -275,7 +374,7 @@ async function deleteEntry(entry) {
   const msg = isFolder
     ? `Excluir a pasta "${entry.path}" e todo o seu conteúdo?`
     : `Excluir o arquivo "${entry.path}" permanentemente?`;
-  if (!confirm(msg)) return;
+  if (!(await confirmModal({ title: isFolder ? 'Excluir pasta' : 'Excluir arquivo', message: msg, confirmLabel: 'Excluir', danger: true }))) return;
 
   try {
     await api(fileUrl(entry.path), { method: 'DELETE' });
@@ -312,13 +411,69 @@ export async function uploadFiles(files, folder = '') {
   }
 }
 
-export const triggerUpload = () => $('file-upload-input').click();
+let uploadFolder = '';
+export function triggerUpload(folder = '') {
+  uploadFolder = typeof folder === 'string' ? folder : '';
+  $('file-upload-input').click();
+}
+
+// ════════════════════════════════════
+//  CHANGES MADE OUTSIDE THE APP (server file watcher)
+// ════════════════════════════════════
+export async function handleFilesChanged(msg) {
+  if (!S.project) return;
+  if (msg.structure) await refreshFiles().catch(() => {});
+  const open = S.openFile;
+  if (!open || !msg.files.includes(open.path)) return;
+  if (open.type !== 'text') {
+    // Reload images/PDFs shown in the editor area
+    const media = fileView.querySelector('img, iframe');
+    if (media) media.src = `${fileUrl(open.path)}?t=${Date.now()}`;
+    return;
+  }
+  if (S.dirty) return; // local edits win; they'll be saved over the file
+  try {
+    const { content } = await api(fileUrl(open.path));
+    if (S.openFile?.path === open.path && !S.dirty && content !== S.content) {
+      replaceContentExternally(content);
+      toast(`${open.path} foi alterado fora do editor e recarregado`);
+    }
+  } catch {}
+}
+
+// After a restore or a pull: refresh the tree and the open file from disk
+export async function reloadFromDisk() {
+  await refreshFiles();
+  S.settings = await api(`${projectUrl()}/settings`);
+  updateCompileTarget();
+  const open = S.openFile && findEntry(S.files, S.openFile.path);
+  if (!open) {
+    S.openFile = null;
+    const next = (S.settings.mainFile && findEntry(S.files, S.settings.mainFile)) || firstTextFile(S.files);
+    return next ? openFile(next) : showEmptyEditor();
+  }
+  await handleFilesChanged({ files: [open.path], structure: false });
+}
 
 export function initProjectUI() {
-  $('btn-new-file').onclick = createNewFile;
-  $('btn-upload-trigger').onclick = triggerUpload;
+  $('btn-new-file').onclick = () => createNewFile();
+  $('btn-new-folder').onclick = () => createFolder();
+  $('btn-upload-trigger').onclick = () => triggerUpload();
   $('file-upload-input').onchange = async e => {
-    await uploadFiles(e.target.files);
+    await uploadFiles(e.target.files, uploadFolder);
     e.target.value = '';
   };
+  initFileTree($('file-list'), {
+    getEntry: path => findEntry(S.files, path),
+    onOpen: entry => openFile(entry),
+    onToggle: toggleFolder,
+    onMenu: entryMenu,
+    onMove: (entry, folder) => moveEntry(entry, [folder, entry.name].filter(Boolean).join('/')),
+    onDropFiles: async (files, folder) => {
+      if (await uploadFiles(files, folder) && folder) {
+        S.expanded.add(folder);
+        refreshTree();
+      }
+    },
+  });
 }

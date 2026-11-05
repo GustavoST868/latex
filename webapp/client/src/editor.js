@@ -1,4 +1,4 @@
-import { EditorState, Compartment, Prec } from '@codemirror/state';
+import { EditorState, Compartment, Prec, Annotation } from '@codemirror/state';
 import {
   EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection,
   dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine,
@@ -23,6 +23,9 @@ import { latexCompletions } from './cm/completion.js';
 import { latexLinter, checkEnvironments, compileDiagnosticsChanged } from './cm/lint.js';
 import { mathPreview } from './cm/math-preview.js';
 import { spellcheck } from './cm/spell.js';
+import { vim } from '@replit/codemirror-vim';
+import { emacs } from '@replit/codemirror-emacs';
+import { inlineAI, closeInlineAI, isInlineAIOpen, dropInlineAI } from './cm/inline-ai.js';
 
 const saveStatus = $('save-status');
 const AUTOSAVE_DELAY_MS = 1500;
@@ -48,6 +51,8 @@ export const EDITOR_DEFAULTS = {
   lineWrapping: true,
   mathPreview: true,
   spellcheck: 'pt-BR',
+  keybindings: 'default',
+  ai: true,
 };
 
 export const editorPref = key => getPref(`editor.${key}`, EDITOR_DEFAULTS[key]);
@@ -59,6 +64,8 @@ const compartments = {
   lineWrapping: new Compartment(),
   mathPreview: new Compartment(),
   spellcheck: new Compartment(),
+  keybindings: new Compartment(),
+  ai: new Compartment(),
 };
 
 const prefExtensions = {
@@ -68,6 +75,8 @@ const prefExtensions = {
   lineWrapping: on => (on ? EditorView.lineWrapping : []),
   mathPreview: on => (on ? mathPreview : []),
   spellcheck: lang => spellcheck(lang === 'off' ? null : lang),
+  keybindings: mode => (mode === 'vim' ? vim() : mode === 'emacs' ? emacs() : []),
+  ai: on => (on ? inlineAI() : []),
 };
 
 function prefExtension(key) {
@@ -102,8 +111,13 @@ const customKeymap = [
   { key: 'Mod-s', run: () => true },
 ];
 
+// Marks edits that came from outside the app (they don't need saving)
+const externalChange = Annotation.define();
+
 function extensions() {
   return [
+    // Vim/Emacs bindings must come before the other keymaps
+    prefExtension('keybindings'),
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightSpecialChars(),
@@ -129,6 +143,7 @@ function extensions() {
     prefExtension('lineWrapping'),
     prefExtension('mathPreview'),
     prefExtension('spellcheck'),
+    prefExtension('ai'),
     Prec.high(keymap.of(customKeymap)),
     keymap.of([
       { key: 'Tab', run: acceptCompletion },
@@ -141,7 +156,7 @@ function extensions() {
       indentWithTab,
     ]),
     EditorView.updateListener.of(u => {
-      if (u.docChanged) markDirty(u.state);
+      if (u.docChanged && !u.transactions.some(tr => tr.annotation(externalChange))) markDirty(u.state);
       if (u.docChanged || u.selectionSet) updateListeners.forEach(fn => fn(u.state));
     }),
   ];
@@ -164,6 +179,7 @@ export const isTextOpen = () => S.openFile?.type === 'text';
 /** Shows a file in the editor, reusing its previous state (undo history) when unchanged. */
 export function setEditorContent(text, path = null) {
   clearTimeout(autosaveTimer);
+  dropInlineAI();
   const cached = path && states.get(path);
   const state = cached && cached.doc.toString() === text
     ? cached
@@ -174,9 +190,24 @@ export function setEditorContent(text, path = null) {
   updateSaveStatus(path ? 'saved' : '');
 }
 
+// Replaces the text with a newer version from disk, keeping undo history and the cursor
+export function replaceContentExternally(text) {
+  const doc = view.state.doc;
+  const head = Math.min(view.state.selection.main.head, text.length);
+  view.dispatch({
+    changes: { from: 0, to: doc.length, insert: text },
+    selection: { anchor: head },
+    annotations: externalChange.of(true),
+  });
+  S.content = text;
+}
+
 // Remembers the open file's state before switching to another file
 export function stashEditorState() {
-  if (view && isTextOpen()) states.set(S.openFile.path, view.state);
+  if (!view || !isTextOpen()) return;
+  // An open AI prompt can't be restored later
+  if (isInlineAIOpen(view)) closeInlineAI(view);
+  states.set(S.openFile.path, view.state);
 }
 
 // Forget cached states (e.g. when leaving the project)
@@ -193,6 +224,14 @@ function markDirty(state) {
   // Save automatically shortly after typing stops, like Overleaf
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => saveFile().catch(() => {}), AUTOSAVE_DELAY_MS);
+}
+
+// Replaces the selection (or inserts at the cursor); used by the AI chat
+export function insertText(text) {
+  if (!view || !isTextOpen()) return false;
+  view.dispatch(view.state.replaceSelection(text), { scrollIntoView: true, userEvent: 'input' });
+  view.focus();
+  return true;
 }
 
 export function focusEditor() {

@@ -13,6 +13,14 @@ import {
   createNewFile, triggerUpload, renameProject, copyProject, downloadSource, showWordCount,
 } from './project.js';
 import { openSettings } from './settings.js';
+import { toggleHistory } from './history.js';
+import { openPalette } from './palette.js';
+import { compile } from './compile.js';
+import { createFolder } from './project.js';
+import { getView } from './editor.js';
+import { openInlineAI } from './cm/inline-ai.js';
+import { aiEnabled } from './ai.js';
+import { getRailPanel } from './layout.js';
 
 const isMac = navigator.platform.toUpperCase().includes('MAC');
 const MOD = isMac ? '⌘' : 'Ctrl';
@@ -25,6 +33,8 @@ export function showShortcuts() {
   const shortcuts = [
     [`${MOD}+S`, 'Salvar e recompilar'],
     [`${MOD}+Enter`, 'Recompilar'],
+    [`${MOD}+K`, 'Paleta de comandos'],
+    [`${MOD}+J`, 'Editar a seleção com IA (ou escrever no cursor)'],
     [`${MOD}+B`, 'Negrito'],
     [`${MOD}+I`, 'Itálico'],
     [`${MOD}+/`, 'Comentar/descomentar linhas'],
@@ -58,15 +68,17 @@ const projectItems = () => [
   { label: 'Renomear projeto', icon: 'edit', action: renameProject },
   '-',
   { label: 'Contagem de palavras', icon: 'match_case', action: showWordCount },
+  { label: 'Histórico de versões', icon: 'history', action: toggleHistory },
   { label: 'Configurações', icon: 'settings', action: openSettings },
 ];
 
-const MENUS = [
+export const MENUS = [
   {
     label: 'Arquivo',
     items: () => [
-      { label: 'Novo arquivo', icon: 'note_add', action: createNewFile },
-      { label: 'Enviar arquivos', icon: 'upload', action: triggerUpload },
+      { label: 'Novo arquivo', icon: 'note_add', action: () => createNewFile() },
+      { label: 'Nova pasta', icon: 'create_new_folder', action: () => createFolder() },
+      { label: 'Enviar arquivos', icon: 'upload', action: () => triggerUpload() },
       '-',
       ...projectItems(),
       '-',
@@ -84,6 +96,9 @@ const MENUS = [
       { label: 'Localizar e substituir', icon: 'find_replace', shortcut: `${MOD}+F`, action: openFind, disabled: needsText() },
       { label: 'Ir para a linha', icon: 'format_list_numbered_rtl', shortcut: `${MOD}+Shift+L`, action: openGotoLine, disabled: needsText() },
       { label: 'Buscar no projeto', icon: 'search', shortcut: `${MOD}+Shift+F`, action: openProjectSearch },
+      '-',
+      { label: 'Editar com IA', icon: 'auto_awesome', shortcut: `${MOD}+J`, disabled: needsText() || !aiEnabled(), action: () => openInlineAI(getView()) },
+      { label: 'Paleta de comandos', icon: 'terminal', shortcut: `${MOD}+K`, action: openPalette },
     ],
   },
   {
@@ -115,6 +130,8 @@ const MENUS = [
       ...LAYOUTS.map(l => ({ label: l.label, checked: getLayout() === l.id, action: () => setLayout(l.id) })),
       '-',
       { label: 'Painel lateral', checked: isRailVisible(), action: () => setRailPanel(isRailVisible() ? null : 'files') },
+      { label: 'Integração com Git', checked: getRailPanel() === 'git', action: () => setRailPanel('git') },
+      ...(aiEnabled() ? [{ label: 'Assistente de IA', checked: getRailPanel() === 'ai', action: () => setRailPanel('ai') }] : []),
       { label: 'Log de compilação', checked: $('log-panel').classList.contains('open'), action: toggleLog },
       '-',
       { label: 'Aumentar zoom do PDF', action: zoomIn },
@@ -142,10 +159,25 @@ const MENUS = [
     label: 'Ajuda',
     items: () => [
       { label: 'Atalhos de teclado', icon: 'keyboard', action: showShortcuts },
+      { label: 'Paleta de comandos', icon: 'terminal', shortcut: `${MOD}+K`, action: openPalette },
       { label: 'Guia de LaTeX (Wikibooks)', icon: 'menu_book', action: () => window.open('https://en.wikibooks.org/wiki/LaTeX', '_blank', 'noopener') },
     ],
   },
 ];
+
+// Everything the command palette can run
+export function paletteCommands() {
+  const out = [
+    { group: 'Projeto', label: 'Recompilar', icon: 'refresh', shortcut: `${MOD}+Enter`, action: () => compile() },
+  ];
+  for (const menu of MENUS) {
+    for (const item of menu.items()) {
+      if (item === '-' || item.heading || !item.action) continue;
+      out.push({ group: menu.label, label: item.label, icon: item.icon, shortcut: item.shortcut, disabled: item.disabled, action: item.action });
+    }
+  }
+  return out;
+}
 
 export function initMenus() {
   buildMenubar($('menubar'), MENUS);

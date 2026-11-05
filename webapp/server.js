@@ -7,6 +7,9 @@ const http = require('http');
 const WebSocket = require('ws');
 const multer = require('multer');
 const archiver = require('archiver');
+const AdmZip = require('adm-zip');
+const chokidar = require('chokidar');
+const git = require('./git');
 
 const PORT = process.env.PORT || 3000;
 // Só escuta na máquina local por padrão: o servidor executa LaTeX e escreve em disco
@@ -14,13 +17,16 @@ const HOST = process.env.HOST || '127.0.0.1';
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server, path: '/ws' });
+const wss = new WebSocket.Server({ server, path: '/ws', verifyClient: ({ req }) => trustedRequest(req) });
+// Listen errors are reported once, by the HTTP server's handler below
+wss.on('error', () => {});
 
 // Projects directory - each project is a subfolder
 const PROJECTS_DIR = path.resolve(process.env.PROJECTS_DIR || path.join(__dirname, 'projects'));
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 
 const DIST_DIR = path.join(__dirname, 'dist');
+const TEMPLATES_DIR = path.join(__dirname, 'templates');
 
 // Arquivos internos de cada projeto (ocultos na árvore de arquivos)
 const META_FILE = '.project.json';
@@ -36,6 +42,34 @@ const TEXT_EXTS = new Set([
   '.sh', '.js', '.css', '.html', '.xml', '.lua', '.py', '.r', '.gitignore'
 ]);
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp']);
+
+// Other websites open in the browser must not drive this server: reject unknown Host
+// headers (DNS rebinding) and cross-site writes (CSRF). Loopback origins are fine,
+// which keeps the Vite dev server working.
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+const LISTENS_ON_LOOPBACK = /^(localhost|127\.0\.0\.1|::1)$/.test(HOST);
+
+function trustedOrigin(origin, host) {
+  if (!origin) return true;
+  try {
+    const url = new URL(origin);
+    return url.host === host || LOOPBACK_HOST.test(url.host);
+  } catch (e) {
+    return false;
+  }
+}
+
+function trustedRequest(req) {
+  const host = req.headers.host || '';
+  if (LISTENS_ON_LOOPBACK && !LOOPBACK_HOST.test(host)) return false;
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !req.headers.upgrade) return true;
+  return trustedOrigin(req.headers.origin, host) && req.headers['sec-fetch-site'] !== 'cross-site';
+}
+
+app.use((req, res, next) => {
+  if (trustedRequest(req)) return next();
+  res.status(403).json({ error: 'Requisição de outro site bloqueada' });
+});
 
 app.use(express.json({ limit: '50mb' }));
 
@@ -142,6 +176,9 @@ function readMeta(dir) {
   if (!COMPILERS.includes(meta.compiler)) meta.compiler = 'pdflatex';
   meta.shellEscape = meta.shellEscape === true;
   if (!COMPILE_TIMEOUTS.includes(meta.timeout)) meta.timeout = 120;
+  meta.archived = meta.archived === true;
+  meta.trashed = meta.trashed === true;
+  meta.tags = Array.isArray(meta.tags) ? meta.tags.filter(t => typeof t === 'string') : [];
   if (!meta.mainFile || !fs.existsSync(path.join(dir, meta.mainFile))) {
     meta.mainFile = detectMainFile(dir);
   }
@@ -173,47 +210,142 @@ function broadcastTo(project, data) {
 
 // ─── Projects API ─────────────────────────────────────────────────────────────
 
-// List all projects
+// Newest modification time among the project's own files
+function lastModified(dir) {
+  let newest = fs.statSync(dir).mtimeMs;
+  (function walk(d, depth) {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue;
+      const abs = path.join(d, entry.name);
+      if (entry.isDirectory()) { if (depth < 6) walk(abs, depth + 1); continue; }
+      try { newest = Math.max(newest, fs.statSync(abs).mtimeMs); } catch (e) {}
+    }
+  })(dir, 0);
+  return new Date(newest);
+}
+
+function compiledPdfName(dir, meta) {
+  if (!meta.mainFile) return null;
+  const pdf = path.basename(meta.mainFile, '.tex') + '.pdf';
+  return fs.existsSync(path.join(dir, OUTPUT_DIR, pdf)) ? pdf : null;
+}
+
+// List all projects (the dashboard filters archived/trashed/tags on the client)
 app.get('/api/projects', route((req, res) => {
   const projects = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
     .filter(d => d.isDirectory() && !d.name.startsWith('.'))
-    .map(d => ({
-      name: d.name,
-      mtime: fs.statSync(path.join(PROJECTS_DIR, d.name)).mtime
-    }))
+    .map(d => {
+      const dir = path.join(PROJECTS_DIR, d.name);
+      const meta = readMeta(dir);
+      return {
+        name: d.name,
+        mtime: lastModified(dir),
+        archived: meta.archived,
+        trashed: meta.trashed,
+        tags: meta.tags,
+        pdfFile: compiledPdfName(dir, meta),
+        git: git.isRepo(dir),
+      };
+    })
     .sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
   res.json(projects);
 }));
 
-// Create new project
-app.post('/api/projects', route((req, res) => {
-  const name = validateProjectName(req.body.name);
+function listTemplates() {
+  if (!fs.existsSync(TEMPLATES_DIR)) return [];
+  return fs.readdirSync(TEMPLATES_DIR, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => {
+      try {
+        const info = JSON.parse(fs.readFileSync(path.join(TEMPLATES_DIR, d.name, 'template.json'), 'utf8'));
+        return { id: d.name, ...info };
+      } catch (e) { return null; }
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.order || 99) - (b.order || 99));
+}
+
+app.get('/api/templates', route((req, res) => res.json(listTemplates())));
+
+// Reserves a new project folder, failing if the name is taken
+function newProjectDir(rawName) {
+  const name = validateProjectName(rawName);
   const dir = path.join(PROJECTS_DIR, name);
   if (fs.existsSync(dir)) throw new HttpError(409, 'Já existe um projeto com esse nome');
+  return { name, dir };
+}
 
-  fs.mkdirSync(dir, { recursive: true });
+// Settings and a first history entry for a freshly created project
+function initProject(dir, message) {
+  writeMeta(dir, { ...readMeta(dir), createdAt: new Date() });
+  git.snapshot(dir, message).catch(err => console.warn('[history]', err.message));
+}
+
+// Create new project from a template
+app.post('/api/projects', route((req, res) => {
+  const { name, dir } = newProjectDir(req.body.name);
+  const templateId = String(req.body.template || 'blank');
+  const template = listTemplates().find(t => t.id === templateId);
+  if (!template) throw new HttpError(400, 'Modelo não encontrado');
+
+  const src = path.join(TEMPLATES_DIR, template.id);
   const title = name.replace(/[\\{}$&#^_%~]/g, '');
-  const defaultTex = `\\documentclass{article}
-\\usepackage[utf8]{inputenc}
-\\usepackage[brazil]{babel}
-\\usepackage{graphicx}
+  fs.cpSync(src, dir, { recursive: true, filter: s => path.basename(s) !== 'template.json' });
+  for (const file of listFiles(dir)) {
+    if (file.type !== 'text') continue;
+    const abs = path.join(dir, file.path);
+    fs.writeFileSync(abs, fs.readFileSync(abs, 'utf8').replaceAll('{{TITLE}}', title));
+  }
+  initProject(dir, `Projeto criado (${template.title})`);
+  console.log(`[API] Project created: ${name} (${template.id})`);
+  res.json({ name, created: true });
+}));
 
-\\title{${title}}
-\\author{Seu Nome}
-\\date{\\today}
+// Create a project from an uploaded .zip
+const zipUpload = multer({ dest: path.join(os.tmpdir(), 'latex-uploads'), limits: { fileSize: 200 * 1024 * 1024 } });
+app.post('/api/projects/import-zip', zipUpload.single('file'), route((req, res) => {
+  const file = req.file;
+  try {
+    if (!file) throw new HttpError(400, 'Envie um arquivo .zip');
+    const rawName = req.body.name || path.basename(file.originalname || 'Projeto', '.zip');
+    const { name, dir } = newProjectDir(rawName);
+    let entries;
+    try {
+      entries = new AdmZip(file.path).getEntries().filter(e => !e.isDirectory && !e.entryName.startsWith('__MACOSX/'));
+    } catch (e) {
+      throw new HttpError(400, 'Arquivo .zip inválido');
+    }
+    if (!entries.length) throw new HttpError(400, 'O .zip está vazio');
+    // A zip with a single top-level folder is unwrapped
+    const tops = new Set(entries.map(e => e.entryName.split('/')[0]));
+    const strip = tops.size === 1 && entries.every(e => e.entryName.includes('/')) ? [...tops][0] + '/' : '';
+    fs.mkdirSync(dir);
+    try {
+      for (const entry of entries) {
+        const rel = entry.entryName.slice(strip.length);
+        if (!rel || rel.split('/').some(s => s.startsWith('.'))) continue; // skip hidden files
+        const dest = safeResolve(dir, rel);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.writeFileSync(dest, entry.getData());
+      }
+    } catch (e) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      throw e;
+    }
+    initProject(dir, 'Projeto importado de um .zip');
+    res.json({ name, created: true });
+  } finally {
+    if (file) fs.rm(file.path, { force: true }, () => {});
+  }
+}));
 
-\\begin{document}
-
-\\maketitle
-
-\\section{Introdução}
-Escreva seu texto aqui.
-
-\\end{document}
-`;
-  fs.writeFileSync(path.join(dir, 'main.tex'), defaultTex);
-  writeMeta(dir, { mainFile: 'main.tex', compiler: 'pdflatex', shellEscape: false, createdAt: new Date() });
-  console.log(`[API] Project created: ${name}`);
+// Create a project by cloning a Git repository
+app.post('/api/projects/import-git', route(async (req, res) => {
+  const url = String(req.body.url || '').trim();
+  const fallback = path.basename(url.replace(/\/+$/, ''), '.git') || 'Projeto';
+  const { name, dir } = newProjectDir(req.body.name || fallback);
+  await git.cloneInto(url, dir);
+  initProject(dir, 'Projeto clonado de um repositório Git');
   res.json({ name, created: true });
 }));
 
@@ -234,6 +366,9 @@ app.post('/api/projects/:name/rename', route((req, res) => {
   const dest = path.join(PROJECTS_DIR, newName);
   if (fs.existsSync(dest)) throw new HttpError(409, 'Já existe um projeto com esse nome');
   fs.renameSync(dir, dest);
+  // Pending history and compile options follow the project
+  if (changedProjects.delete(req.params.name)) changedProjects.add(newName);
+  lastCompileOptions.delete(req.params.name);
   res.json({ name: newName });
 }));
 
@@ -243,8 +378,12 @@ app.post('/api/projects/:name/copy', route((req, res) => {
   const newName = validateProjectName(req.body.newName);
   const dest = path.join(PROJECTS_DIR, newName);
   if (fs.existsSync(dest)) throw new HttpError(409, 'Já existe um projeto com esse nome');
-  const outDir = path.join(dir, OUTPUT_DIR);
-  fs.cpSync(dir, dest, { recursive: true, filter: src => src !== outDir });
+  // Compiled output and version history stay with the original
+  const skip = new Set([path.join(dir, OUTPUT_DIR), path.join(dir, git.HISTORY_DIR)]);
+  fs.cpSync(dir, dest, { recursive: true, filter: src => !skip.has(src) });
+  const meta = readMeta(dest);
+  writeMeta(dest, { ...meta, archived: false, trashed: false, createdAt: new Date() });
+  git.snapshot(dest, `Cópia de ${path.basename(dir)}`).catch(err => console.warn('[history]', err.message));
   res.json({ name: newName });
 }));
 
@@ -370,7 +509,7 @@ app.get('/api/projects/:name/settings', route((req, res) => {
 app.patch('/api/projects/:name/settings', route((req, res) => {
   const dir = projectDir(req.params.name);
   const meta = readMeta(dir);
-  const { mainFile, compiler, shellEscape, timeout } = req.body;
+  const { mainFile, compiler, shellEscape, timeout, archived, trashed, tags } = req.body;
   if (mainFile !== undefined) {
     const abs = safeResolve(dir, mainFile);
     if (!mainFile.endsWith('.tex') || !fs.existsSync(abs)) {
@@ -386,6 +525,21 @@ app.patch('/api/projects/:name/settings', route((req, res) => {
   if (timeout !== undefined) {
     if (!COMPILE_TIMEOUTS.includes(timeout)) throw new HttpError(400, 'Tempo limite inválido');
     meta.timeout = timeout;
+  }
+  // Dashboard state: a project is either active, archived or in the trash
+  if (archived !== undefined) {
+    meta.archived = archived === true;
+    if (meta.archived) meta.trashed = false;
+  }
+  if (trashed !== undefined) {
+    meta.trashed = trashed === true;
+    if (meta.trashed) meta.archived = false;
+  }
+  if (tags !== undefined) {
+    if (!Array.isArray(tags) || tags.some(t => typeof t !== 'string' || !t.trim() || t.length > 50)) {
+      throw new HttpError(400, 'Tags inválidas');
+    }
+    meta.tags = [...new Set(tags.map(t => t.trim()))];
   }
   writeMeta(dir, meta);
   res.json(meta);
@@ -414,6 +568,7 @@ app.put('/api/projects/:name/files/*', route((req, res) => {
   if (content !== undefined && typeof content !== 'string') throw new HttpError(400, 'Conteúdo inválido');
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content || '');
+  markChanged(req.params.name);
   res.json({ saved: true });
 }));
 
@@ -421,8 +576,45 @@ app.put('/api/projects/:name/files/*', route((req, res) => {
 app.delete('/api/projects/:name/files/*', route((req, res) => {
   const filePath = safeResolve(projectDir(req.params.name), req.params[0]);
   if (!fs.existsSync(filePath)) throw new HttpError(404, 'Arquivo não encontrado');
+  const dir = projectDir(req.params.name);
+  const meta = readMeta(dir);
   fs.rmSync(filePath, { recursive: true });
+  // Deleting the main document (or its folder) lets the next one be detected
+  if (meta.mainFile && !fs.existsSync(path.join(dir, meta.mainFile))) writeMeta(dir, { ...meta, mainFile: detectMainFile(dir) });
+  markChanged(req.params.name);
   res.json({ deleted: true });
+}));
+
+// Create a folder
+app.post('/api/projects/:name/folders', route((req, res) => {
+  const folder = safeResolve(projectDir(req.params.name), String(req.body.path || ''));
+  if (fs.existsSync(folder)) throw new HttpError(409, 'Já existe um arquivo ou pasta com esse nome');
+  fs.mkdirSync(folder, { recursive: true });
+  res.json({ created: true });
+}));
+
+// Rename or move a file/folder (never overwrites)
+app.post('/api/projects/:name/move', route((req, res) => {
+  const dir = projectDir(req.params.name);
+  const from = safeResolve(dir, String(req.body.from || ''));
+  const to = safeResolve(dir, String(req.body.to || ''));
+  if (!fs.existsSync(from)) throw new HttpError(404, 'Arquivo não encontrado');
+  if (from === to) return res.json({ moved: false });
+  if (fs.existsSync(to)) throw new HttpError(409, 'Já existe um arquivo ou pasta com esse nome no destino');
+  if (to.startsWith(from + path.sep)) throw new HttpError(400, 'Não é possível mover uma pasta para dentro dela mesma');
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  fs.renameSync(from, to);
+
+  // Keep the main document pointing at the same file
+  const meta = readMeta(dir);
+  const rel = abs => path.relative(dir, abs).split(path.sep).join('/');
+  const fromRel = rel(from), toRel = rel(to);
+  const stored = (() => { try { return JSON.parse(fs.readFileSync(path.join(dir, META_FILE), 'utf8')).mainFile; } catch (e) { return null; } })();
+  if (stored && (stored === fromRel || stored.startsWith(fromRel + '/'))) {
+    writeMeta(dir, { ...meta, mainFile: toRel + stored.slice(fromRel.length) });
+  }
+  markChanged(req.params.name);
+  res.json({ moved: true, path: toRel });
 }));
 
 // Upload files (optional ?folder=sub/dir)
@@ -441,6 +633,7 @@ app.post('/api/projects/:name/upload', upload.array('files'), route((req, res) =
       // copy + unlink instead of rename: /tmp is often on another filesystem
       fs.copyFileSync(file.path, dest);
     }
+    markChanged(req.params.name);
     res.json({ uploaded: files.length });
   } finally {
     files.forEach(f => fs.rm(f.path, { force: true }, () => {}));
@@ -544,6 +737,7 @@ app.post('/api/projects/:name/compile', route(async (req, res) => {
       : pdfFile ? 'errors' : 'failure';
 
     broadcastTo(project, { type: 'compile_done', status, pdfFile });
+    recordHistory(project, 'Compilação');
     res.json({
       status,
       pdfFile,
@@ -671,6 +865,212 @@ app.get('/api/projects/:name/output/:file', route((req, res) => {
   res.sendFile(filePath);
 }));
 
+// ─── History (automatic versions in <project>/.history) ───────────────────────
+
+const HISTORY_INTERVAL_MS = 5 * 60 * 1000;
+const changedProjects = new Set();
+
+function markChanged(project) {
+  changedProjects.add(project);
+}
+
+// Records a version if anything changed since the last one
+function recordHistory(project, message) {
+  changedProjects.delete(project);
+  let dir;
+  try { dir = projectDir(project); } catch (e) { return Promise.resolve(null); }
+  return git.snapshot(dir, message).catch(err => {
+    console.warn('[history]', err.message);
+    return null;
+  });
+}
+
+// Edits that weren't followed by a compile still get a version every few minutes
+setInterval(() => {
+  for (const project of [...changedProjects]) recordHistory(project, 'Alterações salvas');
+}, HISTORY_INTERVAL_MS).unref();
+
+app.get('/api/projects/:name/history', route(async (req, res) => {
+  // Include edits not recorded yet (also changes made outside the app)
+  await recordHistory(req.params.name, 'Alterações salvas');
+  res.json(await git.historyLog(projectDir(req.params.name)));
+}));
+
+// Save a version now (optionally with a label)
+app.post('/api/projects/:name/history', route(async (req, res) => {
+  const dir = projectDir(req.params.name);
+  const label = typeof req.body.label === 'string' ? req.body.label.trim().slice(0, 80) : '';
+  changedProjects.delete(req.params.name);
+  let hash = await git.snapshot(dir, label ? `Versão nomeada: ${label}` : 'Versão salva manualmente');
+  if (!hash) hash = (await git.historyLog(dir, 1))[0]?.hash;
+  if (!hash) throw new HttpError(400, 'Nada para salvar');
+  if (label) git.addLabel(dir, hash, label);
+  res.json({ hash });
+}));
+
+app.get('/api/projects/:name/history/:hash/diff', route(async (req, res) => {
+  const dir = projectDir(req.params.name);
+  const file = String(req.query.file || '');
+  safeResolve(dir, file);
+  res.json({ diff: await git.historyDiff(dir, req.params.hash, file) });
+}));
+
+app.get('/api/projects/:name/history/:hash/file', route(async (req, res) => {
+  const dir = projectDir(req.params.name);
+  const file = String(req.query.file || '');
+  safeResolve(dir, file);
+  const data = await git.historyFile(dir, req.params.hash, file);
+  if (fileType(file) === 'text') return res.type('text/plain; charset=utf-8').send(data);
+  res.type(path.extname(file) || 'application/octet-stream').send(data);
+}));
+
+app.post('/api/projects/:name/history/:hash/restore', route(async (req, res) => {
+  const project = req.params.name;
+  const dir = projectDir(project);
+  if (compiling.has(project)) throw new HttpError(409, 'Aguarde a compilação terminar');
+  const file = req.body.file ? String(req.body.file) : null;
+  if (file) safeResolve(dir, file);
+  changedProjects.delete(project);
+  await git.historyRestore(dir, req.params.hash, file);
+  const meta = readMeta(dir);
+  writeMeta(dir, meta);
+  res.json({ restored: true });
+}));
+
+app.post('/api/projects/:name/history/:hash/labels', route((req, res) => {
+  const dir = projectDir(req.params.name);
+  const label = String(req.body.label || '').trim().slice(0, 80);
+  if (!label) throw new HttpError(400, 'Digite um nome para a versão');
+  res.json({ labels: git.addLabel(dir, req.params.hash, label) });
+}));
+
+app.delete('/api/projects/:name/history/:hash/labels', route((req, res) => {
+  git.removeLabel(projectDir(req.params.name), req.params.hash, String(req.query.label || ''));
+  res.json({ removed: true });
+}));
+
+// ─── Git integration (the project folder as a real repository) ────────────────
+
+app.get('/api/projects/:name/git', route(async (req, res) => {
+  res.json(await git.repoStatus(projectDir(req.params.name)));
+}));
+
+app.post('/api/projects/:name/git/:action', route(async (req, res) => {
+  const dir = projectDir(req.params.name);
+  const { action } = req.params;
+  if (action === 'init') await git.repoInit(dir);
+  else if (action === 'remote') await git.repoSetRemote(dir, req.body.url);
+  else if (action === 'commit') {
+    const message = String(req.body.message || '').trim();
+    if (!message) throw new HttpError(400, 'Escreva uma mensagem para o commit');
+    await git.repoCommit(dir, message);
+  } else if (action === 'pull') await git.repoPull(dir);
+  else if (action === 'push') await git.repoPush(dir);
+  else throw new HttpError(404, 'Ação desconhecida');
+  res.json(await git.repoStatus(dir));
+}));
+
+// ─── AI assistant (local models served by Ollama) ─────────────────────────────
+
+const OLLAMA_URL = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
+const AI_MAX_CHARS = 400000;
+
+const AI_PROMPTS = {
+  chat: 'Você é um assistente de LaTeX integrado a um editor no estilo do Overleaf. '
+    + 'Responda em português do Brasil, de forma direta e sem rodeios. '
+    + 'Quando mostrar código LaTeX, use blocos ```latex. Ao corrigir um trecho, mostre o trecho corrigido completo. '
+    + 'Não invente pacotes, comandos nem referências bibliográficas; se não tiver certeza, diga.',
+  edit: 'Você edita trechos de documentos LaTeX. Siga a instrução e responda SOMENTE com o texto LaTeX que deve '
+    + 'substituir o trecho (ou ser inserido no cursor): sem explicações, sem comentários sobre as mudanças e sem blocos ```. '
+    + 'Preserve comandos, rótulos, citações e a indentação do original, a menos que a instrução peça outra coisa. '
+    + 'Mantenha o idioma do texto, salvo quando a instrução pedir uma tradução.',
+};
+
+async function ollama(pathname, options = {}) {
+  let res;
+  try {
+    res = await fetch(OLLAMA_URL + pathname, options);
+  } catch (e) {
+    if (e.name === 'AbortError') throw e;
+    throw new HttpError(503, `Não foi possível conectar ao Ollama em ${OLLAMA_URL}. Verifique se ele está instalado e rodando.`);
+  }
+  if (!res.ok) {
+    let msg = `O Ollama respondeu com o erro ${res.status}`;
+    try { msg = (await res.json()).error || msg; } catch (e) {}
+    throw new HttpError(502, msg);
+  }
+  return res;
+}
+
+// Installed models that can chat (embedding-only models are left out)
+async function aiModels() {
+  const res = await ollama('/api/tags', { signal: AbortSignal.timeout(4000) });
+  const { models = [] } = await res.json();
+  return models
+    .filter(m => !m.capabilities || m.capabilities.includes('completion'))
+    .map(m => ({
+      name: m.name,
+      size: m.details?.parameter_size || '',
+      thinking: (m.capabilities || []).includes('thinking'),
+    }));
+}
+
+app.get('/api/ai/models', route(async (req, res) => {
+  try {
+    res.json({ available: true, url: OLLAMA_URL, models: await aiModels() });
+  } catch (e) {
+    res.json({ available: false, url: OLLAMA_URL, models: [], error: e.message });
+  }
+}));
+
+// Streams the model's reply as NDJSON, exactly as Ollama sends it
+app.post('/api/ai/chat', route(async (req, res) => {
+  const { model, messages, mode = 'chat', think = false } = req.body;
+  if (typeof model !== 'string' || !model || model.length > 200) throw new HttpError(400, 'Escolha um modelo');
+  if (!Object.hasOwn(AI_PROMPTS, mode)) throw new HttpError(400, 'Modo inválido');
+  if (!Array.isArray(messages) || !messages.length || messages.length > 200
+    || messages.some(m => !['user', 'assistant'].includes(m?.role) || typeof m.content !== 'string')) {
+    throw new HttpError(400, 'Mensagens inválidas');
+  }
+  if (messages.reduce((n, m) => n + m.content.length, 0) > AI_MAX_CHARS) {
+    throw new HttpError(413, 'A conversa ficou grande demais. Comece uma nova conversa.');
+  }
+  const info = (await aiModels()).find(m => m.name === model);
+  if (!info) throw new HttpError(404, `O modelo "${model}" não está instalado no Ollama`);
+
+  // Stop generating when the client goes away (stop button, closed window)
+  const controller = new AbortController();
+  res.on('close', () => controller.abort());
+  let upstream;
+  try {
+    upstream = await ollama('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        stream: true,
+        think: info.thinking && think === true,
+        keep_alive: '30m',
+        messages: [{ role: 'system', content: AI_PROMPTS[mode] }, ...messages.map(({ role, content }) => ({ role, content }))],
+        options: { num_ctx: 8192, temperature: mode === 'edit' ? 0.2 : 0.6 },
+      }),
+    });
+  } catch (e) {
+    if (controller.signal.aborted) return;
+    throw e;
+  }
+
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  try {
+    for await (const chunk of upstream.body) res.write(chunk);
+  } catch (e) {
+    if (!controller.signal.aborted) res.write(JSON.stringify({ error: 'A conexão com o Ollama foi interrompida' }) + '\n');
+  }
+  res.end();
+}));
+
 app.use('/api', (req, res) => res.status(404).json({ error: 'Rota não encontrada' }));
 
 // ─── Frontend ─────────────────────────────────────────────────────────────────
@@ -679,6 +1079,66 @@ if (fs.existsSync(DIST_DIR)) {
   app.use(express.static(DIST_DIR));
 } else {
   app.get('/', (req, res) => res.status(503).send('Frontend não compilado. Rode <code>npm run build</code> em webapp/.'));
+}
+
+// ─── Watch for changes made outside the app ──────────────────────────────────
+
+const pendingChanges = new Map(); // project → { timer, files: Set, structure }
+
+const watcher = chokidar.watch(PROJECTS_DIR, {
+  ignoreInitial: true,
+  // Internal files (.output, .history, .project.json) and other dotfiles
+  ignored: p => path.relative(PROJECTS_DIR, p).split(path.sep).some(seg => seg.startsWith('.')),
+  depth: 12,
+});
+watcher.on('all', (event, abs) => {
+  const [project, ...rest] = path.relative(PROJECTS_DIR, abs).split(path.sep);
+  if (!project || project.startsWith('..')) return;
+  let pending = pendingChanges.get(project);
+  if (!pending) {
+    pending = { files: new Set(), structure: false, topLevel: false };
+    pendingChanges.set(project, pending);
+  }
+  if (event === 'change') pending.files.add(rest.join('/'));
+  else pending.structure = true;
+  // A project folder itself was added or removed
+  if (!rest.length) pending.topLevel = true;
+  clearTimeout(pending.timer);
+  pending.timer = setTimeout(() => {
+    pendingChanges.delete(project);
+    broadcastTo(project, { type: 'files_changed', files: [...pending.files], structure: pending.structure });
+    if (pending.topLevel) broadcastAll({ type: 'projects_changed' });
+  }, 300);
+});
+watcher.on('error', err => console.warn('[watch]', err.message));
+
+function broadcastAll(data) {
+  const payload = JSON.stringify(data);
+  wss.clients.forEach(client => { if (client.readyState === WebSocket.OPEN) client.send(payload); });
+}
+
+// ─── Desktop app mode: quit once the last window has been closed ─────────────
+
+if (process.env.EXIT_WHEN_IDLE) {
+  const graceMs = Number(process.env.EXIT_WHEN_IDLE) * 1000 || 30000;
+  let idleTimer = null;
+  const check = () => {
+    clearTimeout(idleTimer);
+    if (wss.clients.size === 0) {
+      idleTimer = setTimeout(async () => {
+        if (wss.clients.size) return;
+        console.log('Nenhuma janela aberta, salvando o histórico e encerrando.');
+        await Promise.all([...changedProjects].map(p => recordHistory(p, 'Alterações salvas')));
+        process.exit(0);
+      }, graceMs);
+    }
+  };
+  wss.on('connection', ws => {
+    clearTimeout(idleTimer);
+    ws.on('close', check);
+  });
+  // Also quit if no window ever connects
+  check();
 }
 
 // ─── Start server ─────────────────────────────────────────────────────────────

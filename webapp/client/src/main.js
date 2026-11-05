@@ -3,21 +3,28 @@ import './style.css';
 import { $, showView, toast } from './util.js';
 import { S } from './state.js';
 import { api, projectUrl } from './api.js';
-import { applyTheme, applyFontSize } from './prefs.js';
+import { applyTheme, applyFontSize, applyEditorAppearance } from './prefs.js';
 import { connectWS } from './ws.js';
 import { initEditor, onSaved, getCursorPosition } from './editor.js';
 import { initPDF, loadPDF } from './pdf.js';
 import { initCompile, compile, handleCompileMessage, updateCompileTarget, scheduleAutoCompile } from './compile.js';
-import { initProjectUI, closeProject, openFileAtLine } from './project.js';
+import { initProjectUI, closeProject, openFileAtLine, openFile, handleFilesChanged, reloadFromDisk } from './project.js';
 import { initHome, refreshHomeProjects } from './home.js';
 import { initLayout, onPanelShown, setLayout, getLayout } from './layout.js';
 import { initSearch, focusSearch } from './search.js';
-import { initMenus } from './menus.js';
+import { initMenus, paletteCommands } from './menus.js';
+import { initOutline } from './outline.js';
+import { initHistory } from './history.js';
+import { initGitPanel, refreshGitPanel } from './gitpanel.js';
+import { initPalette, fileCommands } from './palette.js';
 import { initToolbar } from './toolbar.js';
 import { initSynctex } from './synctex.js';
+import { initChat, onChatShown } from './chat.js';
+import { openSettings } from './settings.js';
 
 applyTheme();
 applyFontSize();
+applyEditorAppearance();
 
 // ════════════════════════════════════
 //  GLOBAL SHORTCUTS
@@ -80,7 +87,17 @@ if (detachedProject) {
   initSearch({ onOpenHit: openFileAtLine });
   initMenus();
   initToolbar();
-  onPanelShown(name => { if (name === 'search') focusSearch(); });
+  initOutline();
+  initHistory({ onRestored: reloadFromDisk });
+  initGitPanel({ onPulled: reloadFromDisk });
+  initChat();
+  $('btn-ai-settings').onclick = () => openSettings('ai');
+  initPalette(() => [...paletteCommands(), ...fileCommands(openFile)]);
+  onPanelShown(name => {
+    if (name === 'search') focusSearch();
+    if (name === 'git') refreshGitPanel();
+    if (name === 'ai') onChatShown();
+  });
   onSaved(() => scheduleAutoCompile());
   initSynctex({ onOpenCode: openFileAtLine, getCursor: getCursorPosition, pdfDetached: () => getLayout() === 'detached' });
 
@@ -90,7 +107,12 @@ if (detachedProject) {
     refreshHomeProjects();
   };
 
-  connectWS(handleCompileMessage);
+  connectWS(msg => {
+    handleCompileMessage(msg);
+    if (msg.type === 'files_changed') handleFilesChanged(msg);
+    // Projects added or removed outside the app
+    if (msg.type === 'projects_changed' && !S.project) refreshHomeProjects();
+  });
   showView('home');
   refreshHomeProjects();
 }

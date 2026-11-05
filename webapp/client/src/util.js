@@ -49,8 +49,9 @@ export function download(url, filename = '') {
 const backdrop = $('modal-backdrop');
 let onModalClose = null;
 
-export function openModal({ title, body, footer = [], onClose = null }) {
+export function openModal({ title, body, footer = [], onClose = null, wide = false }) {
   $('modal-title').textContent = title;
+  backdrop.querySelector('.modal').classList.toggle('wide', wide);
   $('modal-body').replaceChildren(...[].concat(body));
   $('modal-footer').replaceChildren(...footer);
   onModalClose = onClose;
@@ -90,5 +91,21 @@ export function promptModal({ title, label, value = '', confirmLabel = 'OK' }) {
       onClose: () => resolve(result || null),
     });
     input.select();
+  });
+}
+
+// Yes/no question in a modal; resolves to true when confirmed
+export function confirmModal({ title, message, confirmLabel = 'OK', danger = false }) {
+  return new Promise(resolve => {
+    let result = false;
+    openModal({
+      title,
+      body: el('p', {}, message),
+      footer: [
+        el('button', { className: 'btn btn-ghost', onclick: closeModal }, 'Cancelar'),
+        el('button', { className: `btn ${danger ? 'btn-danger' : 'btn-primary'}`, onclick: () => { result = true; closeModal(); } }, confirmLabel),
+      ],
+      onClose: () => resolve(result),
+    });
   });
 }

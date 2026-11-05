@@ -5,6 +5,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Editor LaTeX</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#098842">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
@@ -23,30 +26,45 @@
 
   <div id="app">
 
-    <!-- ── HOME SCREEN (Project Selection) ── -->
+    <!-- ── HOME SCREEN (project dashboard) ── -->
     <div id="home-screen" class="view-screen hidden">
-      <div class="home-container">
-        <header class="home-header">
-          <div class="brand-large">
-            <div class="brand-logo large">∑</div>
-            <h1>Editor LaTeX</h1>
-            <p>Seu editor profissional na web</p>
+      <header class="dash-topbar">
+        <div class="dash-brand"><div class="brand-logo">∑</div><span>Editor LaTeX</span></div>
+        <div class="dash-topbar-right">
+          <button class="icon-btn" id="dash-theme" title="Tema"><span class="ms">contrast</span></button>
+        </div>
+      </header>
+      <div class="dash-body">
+        <aside class="dash-sidebar">
+          <button class="btn btn-primary dash-new" id="btn-new-project"><span class="ms">add</span><span>Novo projeto</span><span class="ms">expand_more</span></button>
+          <nav class="dash-filters" id="dash-filters"></nav>
+          <div class="dash-tags-title">Organizar por tags</div>
+          <nav class="dash-tags" id="dash-tags"></nav>
+          <button class="dash-new-tag" id="btn-new-tag"><span class="ms">add</span><span>Nova tag</span></button>
+          <input type="file" id="zip-upload-input" accept=".zip,application/zip" hidden>
+        </aside>
+        <main class="dash-main">
+          <h2 class="dash-title" id="dash-title">Todos os projetos</h2>
+          <div class="dash-toolbar">
+            <label class="dash-search">
+              <span class="ms">search</span>
+              <input id="dash-search" type="search" placeholder="Buscar nos projetos…" autocomplete="off">
+            </label>
+            <div class="dash-bulk hidden" id="dash-bulk"></div>
           </div>
-        </header>
-
-        <main class="home-content">
-          <div class="projects-section">
-            <div class="section-header">
-              <h2>Meus Projetos</h2>
-              <div class="new-project-inline">
-                <input type="text" id="home-new-project-name" placeholder="Novo projeto..." maxlength="100">
-                <button class="btn btn-primary" id="home-btn-create">Criar</button>
-              </div>
-            </div>
-
-            <div id="home-projects-list" class="home-projects-grid">
-              <div class="loading">Carregando seus projetos...</div>
-            </div>
+          <div class="project-table-wrap">
+            <table class="project-table">
+              <thead>
+                <tr>
+                  <th class="col-check"><input type="checkbox" id="dash-select-all" aria-label="Selecionar todos"></th>
+                  <th class="col-title"><button class="sort-btn" data-sort="name">Título <span class="ms"></span></button></th>
+                  <th class="col-date"><button class="sort-btn" data-sort="mtime">Última modificação <span class="ms"></span></button></th>
+                  <th class="col-actions">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="project-rows"></tbody>
+            </table>
+            <div class="dash-empty hidden" id="dash-empty"></div>
           </div>
         </main>
       </div>
@@ -70,6 +88,10 @@
 
         <div class="toolbar-right">
           <span class="save-status" id="save-status"></span>
+          <button class="toolbar-btn" id="btn-history" title="Histórico de versões">
+            <span class="ms">history</span>
+            <span>Histórico</span>
+          </button>
           <button class="toolbar-btn" id="btn-layout" title="Layout">
             <span class="ms">splitscreen_right</span>
             <span>Layout</span>
@@ -83,6 +105,8 @@
         <nav class="rail" id="rail">
           <button class="rail-tab" data-panel="files" title="Arquivos"><span class="ms">description</span></button>
           <button class="rail-tab" data-panel="search" title="Buscar no projeto (Ctrl+Shift+F)"><span class="ms">search</span></button>
+          <button class="rail-tab" data-panel="git" title="Integração com Git"><span class="ms">commit</span></button>
+          <button class="rail-tab" data-panel="ai" title="Assistente de IA (Ollama)"><span class="ms">auto_awesome</span></button>
           <div class="rail-spacer"></div>
           <button class="rail-tab" id="btn-help" title="Ajuda"><span class="ms">help</span></button>
           <button class="rail-tab" id="btn-settings" title="Configurações"><span class="ms">settings</span></button>
@@ -95,11 +119,19 @@
               <span>Arquivos</span>
               <div class="panel-actions">
                 <button class="icon-btn" id="btn-new-file" title="Novo arquivo"><span class="ms">note_add</span></button>
-                <button class="icon-btn" id="btn-upload-trigger" title="Enviar arquivos"><span class="ms">upload</span></button>
+                <button class="icon-btn" id="btn-new-folder" title="Nova pasta"><span class="ms">create_new_folder</span></button>
+                <button class="icon-btn" id="btn-upload-trigger" title="Enviar arquivos (ou arraste-os para a lista)"><span class="ms">upload</span></button>
               </div>
               <input type="file" id="file-upload-input" multiple hidden>
             </div>
             <div class="file-list" id="file-list"></div>
+            <div class="outline-handle" id="outline-handle"></div>
+            <section class="outline" id="outline">
+              <button class="outline-header" id="outline-toggle">
+                <span class="ms">expand_more</span><span>Sumário do arquivo</span>
+              </button>
+              <div class="outline-list" id="outline-list"></div>
+            </section>
           </section>
 
           <section class="panel hidden" id="panel-search">
@@ -112,6 +144,42 @@
               </div>
             </form>
             <div class="search-results" id="search-results"></div>
+          </section>
+
+          <section class="panel hidden" id="panel-git">
+            <div class="panel-header">
+              <span>Git</span>
+              <div class="panel-actions">
+                <button class="icon-btn" id="btn-git-refresh" title="Atualizar"><span class="ms">refresh</span></button>
+              </div>
+            </div>
+            <div class="git-body" id="git-body"></div>
+          </section>
+
+          <section class="panel hidden" id="panel-ai">
+            <div class="panel-header">
+              <span>Assistente de IA</span>
+              <div class="panel-actions">
+                <button class="icon-btn" id="btn-ai-new" title="Nova conversa"><span class="ms">add_comment</span></button>
+                <button class="icon-btn" id="btn-ai-settings" title="Configurações da IA"><span class="ms">tune</span></button>
+              </div>
+            </div>
+            <div class="ai-notice hidden" id="ai-notice"></div>
+            <div class="ai-messages" id="ai-messages"></div>
+            <form class="ai-composer" id="ai-composer">
+              <div class="ai-context hidden" id="ai-context"></div>
+              <textarea id="ai-input" rows="2" placeholder="Pergunte sobre o documento… (Enter envia, Shift+Enter quebra a linha)"></textarea>
+              <div class="ai-composer-bar">
+                <select id="ai-model" title="Modelo do Ollama"></select>
+                <select id="ai-context-mode" title="O que enviar junto com a pergunta (a seleção sempre vai junto)">
+                  <option value="nearby">Trecho perto do cursor</option>
+                  <option value="file">Arquivo inteiro</option>
+                  <option value="none">Sem contexto</option>
+                </select>
+                <span class="tb-spacer"></span>
+                <button type="submit" class="ai-send" id="btn-ai-send"></button>
+              </div>
+            </form>
           </section>
         </aside>
         <div class="resize-handle" id="rail-handle" title="Arraste para redimensionar"></div>
@@ -198,6 +266,33 @@
               </div>
             </div>
           </div>
+        </section>
+
+        <!-- ── HISTORY (replaces the editor and the PDF while open) ── -->
+        <section class="history-view" id="history-view">
+          <aside class="history-files">
+            <div class="panel-header"><span>Arquivos alterados</span></div>
+            <div class="history-file-list" id="history-file-list"></div>
+          </aside>
+          <main class="history-main">
+            <div class="pane-header history-main-header">
+              <span class="breadcrumbs" id="history-file-name"></span>
+              <span class="tb-spacer"></span>
+              <button class="btn btn-ghost" id="btn-history-restore-file" disabled><span class="ms">restore</span><span>Restaurar este arquivo</span></button>
+            </div>
+            <div class="history-diff" id="history-diff"></div>
+          </main>
+          <aside class="history-versions">
+            <div class="panel-header">
+              <span>Versões</span>
+              <div class="panel-actions">
+                <button class="icon-btn" id="btn-history-save" title="Salvar uma versão agora"><span class="ms">bookmark_add</span></button>
+                <button class="icon-btn" id="btn-history-close" title="Voltar ao editor"><span class="ms">close</span></button>
+              </div>
+            </div>
+            <label class="history-only-labels"><input type="checkbox" id="history-only-labels"> Só versões nomeadas</label>
+            <div class="history-version-list" id="history-version-list"></div>
+          </aside>
         </section>
       </div>
     </div>

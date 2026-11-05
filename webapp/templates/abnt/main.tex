@@ -1,0 +1,44 @@
+\documentclass[12pt,oneside,a4paper,brazil]{abntex2}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{graphicx}
+\usepackage[alf]{abntex2cite}
+
+\titulo{{{TITLE}}}
+\autor{Seu Nome}
+\local{Cidade}
+\data{\the\year}
+\instituicao{Universidade \par Departamento}
+\tipotrabalho{Trabalho de Conclusão de Curso}
+\preambulo{Trabalho apresentado como requisito parcial para a obtenção do grau de Bacharel.}
+\orientador{Prof. Dr. Orientador}
+
+\begin{document}
+
+\pretextual
+\imprimircapa
+\imprimirfolhaderosto
+
+\begin{resumo}
+Resumo do trabalho.
+
+\textbf{Palavras-chave}: palavra1. palavra2. palavra3.
+\end{resumo}
+
+\tableofcontents*
+
+\textual
+
+\chapter{Introdução}
+Texto da introdução~\cite{knuth1984}.
+
+\chapter{Desenvolvimento}
+Texto.
+
+\chapter{Conclusão}
+Texto.
+
+\postextual
+\bibliography{referencias}
+
+\end{document}

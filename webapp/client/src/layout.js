@@ -146,7 +146,7 @@ export function initLayout() {
 
   dragHandle($('rail-handle'), e => {
     const left = railPanel.getBoundingClientRect().left;
-    L.railWidth = Math.round(Math.max(180, Math.min(480, e.clientX - left)));
+    L.railWidth = Math.round(Math.max(180, Math.min(720, e.clientX - left)));
     railPanel.style.width = L.railWidth + 'px';
   }, () => setPref('railWidth', L.railWidth));
 

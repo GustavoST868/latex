@@ -1,0 +1,45 @@
+\documentclass{beamer}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usetheme{Madrid}
+
+\title{{{TITLE}}}
+\author{Seu Nome}
+\institute{Sua Instituição}
+\date{\today}
+
+\begin{document}
+
+\frame{\titlepage}
+
+\begin{frame}{Sumário}
+  \tableofcontents
+\end{frame}
+
+\section{Introdução}
+\begin{frame}{Introdução}
+  \begin{itemize}
+    \item Primeiro ponto
+    \item Segundo ponto
+    \item Terceiro ponto
+  \end{itemize}
+\end{frame}
+
+\section{Desenvolvimento}
+\begin{frame}{Duas colunas}
+  \begin{columns}
+    \column{0.5\textwidth}
+    Texto à esquerda.
+    \column{0.5\textwidth}
+    \begin{block}{Destaque}
+      Um bloco de destaque.
+    \end{block}
+  \end{columns}
+\end{frame}
+
+\section{Conclusão}
+\begin{frame}{Conclusão}
+  Obrigado!
+\end{frame}
+
+\end{document}

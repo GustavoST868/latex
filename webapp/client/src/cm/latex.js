@@ -85,7 +85,7 @@ export const editorTheme = EditorView.theme({
     color: 'var(--text)',
   },
   '&.cm-focused': { outline: 'none' },
-  '.cm-scroller': { fontFamily: 'var(--font-code)', lineHeight: '1.6' },
+  '.cm-scroller': { fontFamily: 'var(--editor-font, var(--font-code))', lineHeight: 'var(--editor-line-height, 1.6)' },
   '.cm-content': { padding: '8px 0', caretColor: 'var(--text)' },
   '.cm-line': { padding: '0 12px 0 6px' },
   '.cm-gutters': {

@@ -1,0 +1,58 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[colorlinks=true,allcolors=blue]{hyperref}
+
+\title{{{TITLE}}}
+\author{Seu Nome}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Este é um projeto de exemplo. Edite o texto à esquerda e veja o PDF à direita.
+\end{abstract}
+
+\section{Introdução}\label{sec:intro}
+O \LaTeX{} cuida da numeração, das referências cruzadas e da bibliografia.
+Veja a Figura~\ref{fig:exemplo}, a Tabela~\ref{tab:exemplo} e a
+Equação~\eqref{eq:euler}. Uma citação fica assim~\cite{knuth1984}.
+
+\section{Figuras}
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.5\linewidth]{example-image}
+  \caption{Uma imagem de exemplo.}
+  \label{fig:exemplo}
+\end{figure}
+
+\section{Tabelas}
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{lrr}
+    \toprule
+    Item & Quantidade & Preço \\
+    \midrule
+    Café & 2 & 7,50 \\
+    Pão  & 6 & 4,20 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Uma tabela simples.}
+  \label{tab:exemplo}
+\end{table}
+
+\section{Matemática}
+Fórmulas no texto, como $a^2 + b^2 = c^2$, ou em destaque:
+\begin{equation}
+  e^{i\pi} + 1 = 0 \label{eq:euler}
+\end{equation}
+
+\bibliographystyle{plain}
+\bibliography{referencias}
+
+\end{document}

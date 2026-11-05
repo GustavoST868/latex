@@ -42,3 +42,28 @@ export const FONT_SIZES = [11, 12, 13, 14, 16, 18, 20];
 export function applyFontSize(size = getPref('fontSize', 13)) {
   document.documentElement.style.setProperty('--editor-font-size', size + 'px');
 }
+
+// ─── Editor appearance (color theme, font, line spacing) ───
+export const EDITOR_THEMES = [
+  ['default', 'Padrão (segue a interface)'],
+  ['solarized-light', 'Solarized claro'],
+  ['solarized-dark', 'Solarized escuro'],
+  ['monokai', 'Monokai'],
+  ['dracula', 'Dracula'],
+  ['high-contrast', 'Alto contraste'],
+];
+export const EDITOR_FONTS = [
+  ['jetbrains', 'JetBrains Mono', "'JetBrains Mono', ui-monospace, monospace"],
+  ['system', 'Monoespaçada do sistema', "ui-monospace, 'DejaVu Sans Mono', Menlo, Consolas, monospace"],
+  ['courier', 'Courier', "'Courier New', Courier, monospace"],
+];
+export const LINE_HEIGHTS = [['compact', 'Compacto', 1.4], ['normal', 'Normal', 1.6], ['wide', 'Largo', 1.9]];
+
+export function applyEditorAppearance() {
+  const root = document.documentElement;
+  root.dataset.editorTheme = getPref('editorTheme', 'default');
+  const font = EDITOR_FONTS.find(f => f[0] === getPref('editorFont', 'jetbrains')) || EDITOR_FONTS[0];
+  root.style.setProperty('--editor-font', font[2]);
+  const lh = LINE_HEIGHTS.find(l => l[0] === getPref('lineHeight', 'normal')) || LINE_HEIGHTS[1];
+  root.style.setProperty('--editor-line-height', lh[2]);
+}

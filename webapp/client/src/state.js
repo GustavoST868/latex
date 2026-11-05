@@ -11,12 +11,4 @@ export const S = {
   pdfUrl: null,
   pdfFile: null,
   pdfZoom: 1.3,
-  autocomplete: {
-    visible: false,
-    query: '',
-    index: 0,
-    list: [],
-    start: 0,
-    end: 0
-  },
 };
