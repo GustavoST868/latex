@@ -78,7 +78,17 @@ O frontend fica em `webapp/client/` e é empacotado com o Vite em `webapp/dist/`
 ./instalar.sh
 ```
 
-O instalador copia o app para `~/.local/share/editor-latex`, cria o comando `editor-latex` e adiciona **Editor LaTeX** ao menu de aplicativos (e à área de trabalho). O app abre em uma janela própria, usando o Chrome, o Chromium, o Edge ou o Brave, com ícone próprio. O servidor local inicia sozinho e encerra cerca de 20 segundos depois que a última janela fecha. Os projetos ficam em `~/Documentos/Projetos-LaTeX`; para usar outra pasta, rode `PASTA_PROJETOS=/outra/pasta ./instalar.sh`. Rodar o instalador de novo atualiza o app sem mexer nos projetos, e `./desinstalar.sh` remove o app mas mantém os projetos.
+O instalador baixa e instala tudo o que o app precisa. Pelo gerenciador de pacotes da distribuição (apt, dnf, pacman ou zypper), ele instala o TeX Live com os pacotes usados pelos modelos (abnTeX2, Beamer, português, XeLaTeX, LuaLaTeX e biber), além do `latexmk`, do `texcount` e do `git`. Ele instala apenas o que falta, então a senha de administrador só é pedida quando é preciso. Se o Node.js do sistema não existir ou for anterior à versão 18, o instalador baixa a versão LTS oficial de nodejs.org, confere o checksum e a guarda dentro da pasta do app, sem sudo. No fim, ele pergunta se você quer instalar também o assistente de IA (Ollama e o modelo `qwen3.5:9b`, cerca de 7 GB).
+
+| Opção | Efeito |
+|---|---|
+| `--texlive-completo` | instala o TeX Live inteiro (`texlive-full`, cerca de 6 GB) em vez da seleção |
+| `--ia` / `--sem-ia` | instala o assistente de IA sem perguntar / não pergunta |
+| `--sem-dependencias` | não instala programas do sistema, apenas verifica |
+| `PASTA_PROJETOS=/outra/pasta` | escolhe onde ficam os projetos |
+| `MODELO_IA=gemma3:4b` | escolhe o modelo baixado para a IA |
+
+O app é copiado para `~/.local/share/editor-latex`, ganha o comando `editor-latex` e aparece como **Editor LaTeX** no menu de aplicativos (e na área de trabalho). Ele abre em uma janela própria, com ícone próprio, usando o Chrome, o Chromium, o Edge ou o Brave. O servidor local inicia sozinho e encerra cerca de 20 segundos depois que a última janela fecha. Os projetos ficam em `~/Documentos/Projetos-LaTeX`. Rodar o instalador de novo atualiza o app sem mexer nos projetos, e `./desinstalar.sh` remove o app (e o Node.js próprio, se houver) mas mantém os projetos e os programas do sistema.
 
 ### Como executar sem instalar
 

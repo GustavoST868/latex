@@ -984,6 +984,49 @@ const AI_PROMPTS = {
     + 'substituir o trecho (ou ser inserido no cursor): sem explicações, sem comentários sobre as mudanças e sem blocos ```. '
     + 'Preserve comandos, rótulos, citações e a indentação do original, a menos que a instrução peça outra coisa. '
     + 'Mantenha o idioma do texto, salvo quando a instrução pedir uma tradução.',
+  // Quick actions of the inline AI: the user message is the selected text and the reply is JSON
+  'review-en': 'You are an expert English proofreader, like LanguageTool or Grammarly. Fix spelling, grammar, punctuation, '
+    + "word choice and style problems in the user's English text. Keep the original meaning, tone and formatting (line breaks). "
+    + 'Do not add new content. If the text is already correct, return it unchanged with an empty changes list. '
+    + 'Write every explanation in Brazilian Portuguese, briefly. '
+    + 'Respond ONLY with JSON: {"result": "<full corrected text>", "changes": [{"original": "...", "suggestion": "...", "explanation": "..."}]}',
+  'review-pt': 'Você é um revisor especialista em português brasileiro, como o LanguageTool. Corrija ortografia, gramática, '
+    + 'concordância, regência, crase, pontuação e estilo do texto do usuário. Mantenha o sentido, o tom e a formatação (quebras de linha). '
+    + 'Não acrescente conteúdo novo. Se o texto já estiver correto, devolva-o igual e com a lista de mudanças vazia. '
+    + 'Escreva as explicações em português, de forma breve. '
+    + 'Responda SOMENTE com JSON: {"result": "<texto completo corrigido>", "changes": [{"original": "...", "suggestion": "...", "explanation": "..."}]}',
+  'translate-en': "You are a professional translator. Translate the user's text into natural, fluent English. "
+    + 'Preserve meaning, tone and formatting (line breaks). Do not explain, do not add notes. '
+    + 'Respond ONLY with JSON: {"result": "<translation>", "changes": []}',
+  'translate-pt': 'Você é um tradutor profissional. Traduza o texto do usuário para um português brasileiro natural e fluente. '
+    + 'Preserve o sentido, o tom e a formatação (quebras de linha). Não explique e não adicione notas. '
+    + 'Responda SOMENTE com JSON: {"result": "<tradução>", "changes": []}',
+};
+
+// The selections come from LaTeX files: markup must survive the review or translation
+const LATEX_NOTES = {
+  en: ' The text may contain LaTeX: keep commands, environment names, labels, citation keys and math unchanged; only the prose changes.',
+  pt: ' O texto pode conter LaTeX: mantenha inalterados os comandos, os nomes de ambientes, os rótulos, as chaves de citação e as fórmulas; só o texto corrido muda.',
+};
+for (const mode of ['review-en', 'translate-en']) AI_PROMPTS[mode] += LATEX_NOTES.en;
+for (const mode of ['review-pt', 'translate-pt']) AI_PROMPTS[mode] += LATEX_NOTES.pt;
+
+// Modes whose reply must follow this JSON schema (Ollama structured outputs)
+const AI_JSON_MODES = new Set(['review-en', 'review-pt', 'translate-en', 'translate-pt']);
+const AI_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    result: { type: 'string' },
+    changes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { original: { type: 'string' }, suggestion: { type: 'string' }, explanation: { type: 'string' } },
+        required: ['original', 'suggestion', 'explanation'],
+      },
+    },
+  },
+  required: ['result', 'changes'],
 };
 
 async function ollama(pathname, options = {}) {
@@ -1053,7 +1096,8 @@ app.post('/api/ai/chat', route(async (req, res) => {
         think: info.thinking && think === true,
         keep_alive: '30m',
         messages: [{ role: 'system', content: AI_PROMPTS[mode] }, ...messages.map(({ role, content }) => ({ role, content }))],
-        options: { num_ctx: 8192, temperature: mode === 'edit' ? 0.2 : 0.6 },
+        ...(AI_JSON_MODES.has(mode) ? { format: AI_JSON_SCHEMA } : {}),
+        options: { num_ctx: 8192, temperature: mode === 'chat' ? 0.6 : 0.2 },
       }),
     });
   } catch (e) {
