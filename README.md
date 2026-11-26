@@ -85,10 +85,13 @@ O instalador baixa e instala tudo o que o app precisa. Pelo gerenciador de pacot
 | `--texlive-completo` | instala o TeX Live inteiro (`texlive-full`, cerca de 6 GB) em vez da seleção |
 | `--ia` / `--sem-ia` | instala o assistente de IA sem perguntar / não pergunta |
 | `--sem-dependencias` | não instala programas do sistema, apenas verifica |
+| `--tailscale` / `--sem-tailscale` | deixa o servidor sempre ligado e acessível pelos aparelhos da sua tailnet / volta a ser só local |
 | `PASTA_PROJETOS=/outra/pasta` | escolhe onde ficam os projetos |
 | `MODELO_IA=gemma3:4b` | escolhe o modelo baixado para a IA |
 
 O app é copiado para `~/.local/share/editor-latex`, ganha o comando `editor-latex` e aparece como **Editor LaTeX** no menu de aplicativos (e na área de trabalho). Ele abre em uma janela própria, com ícone próprio, usando o Chrome, o Chromium, o Edge ou o Brave. O servidor local inicia sozinho e encerra cerca de 20 segundos depois que a última janela fecha. Os projetos ficam em `~/Documentos/Projetos-LaTeX`. Rodar o instalador de novo atualiza o app sem mexer nos projetos, e `./desinstalar.sh` remove o app (e o Node.js próprio, se houver) mas mantém os projetos e os programas do sistema.
+
+Com `--tailscale`, o servidor vira um serviço do usuário no systemd (`editor-latex.service`), que inicia junto com a sessão e não encerra quando as janelas fecham. Além de `localhost`, ele passa a ouvir nos endereços deste computador na tailnet, então os seus outros aparelhos entram por `http://<IP do Tailscale>:3141` ou pelo nome MagicDNS do computador. Quem está só no mesmo Wi-Fi continua sem acesso. O editor não pede login, por isso qualquer aparelho da tailnet pode abrir e editar os projetos (e rodar comandos, nos projetos com `shell-escape` ligado). A escolha fica guardada em `~/.config/editor-latex/config` e vale também quando o instalador roda de novo.
 
 ### Como executar sem instalar
 
@@ -96,7 +99,7 @@ O app é copiado para `~/.local/share/editor-latex`, ganha o comando `editor-lat
 ./run.sh            # instala dependências, compila o frontend e inicia em http://localhost:3000
 ```
 
-Para desenvolver o frontend com recarga automática, rode `npm run server` e `npm run dev` em `webapp/` (o Vite encaminha `/api` e `/ws` para o servidor). Variáveis opcionais: `PORT`, `HOST` (padrão `127.0.0.1`), `PROJECTS_DIR`, `NO_OPEN=1`, `EXIT_WHEN_IDLE=<segundos>`, que encerra o servidor quando não há janelas abertas, e `OLLAMA_URL` (padrão `http://127.0.0.1:11434`). O servidor recusa requisições e conexões vindas de outros sites abertos no navegador.
+Para desenvolver o frontend com recarga automática, rode `npm run server` e `npm run dev` em `webapp/` (o Vite encaminha `/api` e `/ws` para o servidor). Variáveis opcionais: `PORT`, `HOST` (padrão `127.0.0.1`), `PROJECTS_DIR`, `NO_OPEN=1`, `EXIT_WHEN_IDLE=<segundos>`, que encerra o servidor quando não há janelas abertas, `TAILSCALE=1`, que também ouve nos endereços da tailnet, e `OLLAMA_URL` (padrão `http://127.0.0.1:11434`). O servidor recusa requisições e conexões vindas de outros sites abertos no navegador.
 
 ### Recursos no estilo Overleaf
 

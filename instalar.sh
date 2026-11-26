@@ -7,6 +7,8 @@
 #   ./instalar.sh --ia                 instala também o assistente de IA (Ollama + modelo)
 #   ./instalar.sh --sem-ia             não pergunta sobre o assistente de IA
 #   ./instalar.sh --sem-dependencias   não instala programas do sistema, só verifica
+#   ./instalar.sh --tailscale          deixa o editor sempre ligado e acessível pela
+#                                      tailnet do Tailscale (--sem-tailscale desfaz)
 #   PASTA_PROJETOS=~/x ./instalar.sh   escolhe onde ficam os projetos
 #   MODELO_IA=gemma3:4b ./instalar.sh --ia   escolhe o modelo baixado para a IA
 #
@@ -33,6 +35,8 @@ LAUNCHER="$BIN_DIR/editor-latex"
 DESKTOP_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/applications/editor-latex.desktop"
 ICON_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps/editor-latex.svg"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/editor-latex/config"
+SERVICE_NAME="editor-latex.service"
+SERVICE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$SERVICE_NAME"
 PORT="${PORTA:-3141}"
 AI_MODEL="${MODELO_IA:-qwen3.5:9b}"
 OLLAMA_URL="http://127.0.0.1:11434"
@@ -47,12 +51,15 @@ fail() { printf '  \033[31m✗\033[0m %s\n' "$*"; exit 1; }
 TEX_FULL=0
 WITH_AI=""
 INSTALL_DEPS=1
+TAILSCALE=""
 for arg in "$@"; do
   case "$arg" in
     --texlive-completo) TEX_FULL=1 ;;
     --ia) WITH_AI=1 ;;
     --sem-ia) WITH_AI=0 ;;
     --sem-dependencias) INSTALL_DEPS=0 ;;
+    --tailscale) TAILSCALE=1 ;;
+    --sem-tailscale) TAILSCALE=0 ;;
     -h|--ajuda|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) fail "Opção desconhecida: $arg (veja ./instalar.sh --ajuda)" ;;
   esac
@@ -192,6 +199,8 @@ download_node() {
 bold "Verificando o Node.js"
 NODE_BIN="node"
 if node_usable; then
+  # caminho completo: o serviço do systemd não vê o PATH da sessão
+  NODE_BIN="$(command -v node)"
   ok "Node.js $(node -v) do sistema"
 else
   if [ ! -x "$NODE_DIR/bin/node" ] || ! PATH="$NODE_DIR/bin:$PATH" node_usable; then
@@ -305,30 +314,49 @@ if [ -d "$REPO_DIR/webapp/projects" ]; then
 fi
 
 # ── Configuração e lançador ───────────────────────────────────────────────────
+# Reinstalação sem --tailscale/--sem-tailscale: mantém a escolha feita antes
+if [ -z "$TAILSCALE" ]; then
+  TAILSCALE="$( { [ -f "$CONFIG_FILE" ] && sed -n 's/^TAILSCALE=//p' "$CONFIG_FILE" | tr -d '"'; } || true)"
+  [ "$TAILSCALE" = 1 ] || TAILSCALE=0
+fi
+
 mkdir -p "$(dirname "$CONFIG_FILE")" "$BIN_DIR"
 cat > "$CONFIG_FILE" <<EOF
 # Configuração do Editor LaTeX (lida pelo comando editor-latex)
 PROJECTS_DIR="$PASTA_PROJETOS"
 PORT=$PORT
 NODE_BIN="$NODE_BIN"
+# 1: servidor sempre ligado e acessível pelos aparelhos da tailnet (Tailscale)
+TAILSCALE=$TAILSCALE
 EOF
 ok "Configuração em $CONFIG_FILE"
 
 cat > "$LAUNCHER" <<'EOF'
 #!/usr/bin/env bash
 # Abre o Editor LaTeX em uma janela própria, iniciando o servidor local se preciso.
-# O servidor encerra sozinho uns segundos depois que a última janela fecha.
+# Normalmente o servidor encerra sozinho uns segundos depois que a última janela
+# fecha. Com TAILSCALE=1 ele fica sempre ligado (serviço do systemd), para os
+# aparelhos da tailnet poderem entrar.
+#   editor-latex              abre a janela
+#   editor-latex --servidor   só roda o servidor, em primeiro plano (usado pelo systemd)
 set -u
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/editor-latex"
 APP_DIR="$DATA_DIR/app"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/editor-latex/config"
 LOG_FILE="$DATA_DIR/servidor.log"
+SERVICE_NAME=editor-latex.service
 PORT=3141
 PROJECTS_DIR="$HOME/Documentos/Projetos-LaTeX"
 NODE_BIN=node
+TAILSCALE=0
 # shellcheck disable=SC1090
 [ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
 URL="http://localhost:$PORT"
+
+if [ "${1:-}" = "--servidor" ]; then
+  export PORT PROJECTS_DIR TAILSCALE NO_OPEN=1
+  exec "$NODE_BIN" "$APP_DIR/server.js"
+fi
 
 running() { (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; }
 
@@ -339,11 +367,18 @@ notify() {
 
 if ! running; then
   mkdir -p "$DATA_DIR"
-  PORT="$PORT" PROJECTS_DIR="$PROJECTS_DIR" NO_OPEN=1 EXIT_WHEN_IDLE=20 \
-    nohup "$NODE_BIN" "$APP_DIR/server.js" >"$LOG_FILE" 2>&1 &
+  if [ "$TAILSCALE" = 1 ] && systemctl --user cat "$SERVICE_NAME" >/dev/null 2>&1; then
+    systemctl --user start "$SERVICE_NAME"
+  else
+    # sem o Tailscale, encerra 20 s depois que a última janela fecha
+    IDLE=20
+    [ "$TAILSCALE" = 1 ] && IDLE=""
+    PORT="$PORT" PROJECTS_DIR="$PROJECTS_DIR" TAILSCALE="$TAILSCALE" NO_OPEN=1 EXIT_WHEN_IDLE="$IDLE" \
+      nohup "$NODE_BIN" "$APP_DIR/server.js" >"$LOG_FILE" 2>&1 &
+  fi
   for _ in $(seq 1 50); do running && break; sleep 0.2; done
   if ! running; then
-    notify "O servidor não iniciou. Veja $LOG_FILE"
+    notify "O servidor não iniciou. Veja $LOG_FILE ou journalctl --user -u $SERVICE_NAME"
     exit 1
   fi
 fi
@@ -360,6 +395,54 @@ exec xdg-open "$URL"
 EOF
 chmod +x "$LAUNCHER"
 ok "Comando: $LAUNCHER"
+
+# ── Acesso pela tailnet (servidor sempre ligado) ──────────────────────────────
+# diz se a porta do app está ocupada por algum servidor
+port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; }
+
+# diz se dá para usar serviços do usuário no systemd
+user_systemd() { command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; }
+
+if [ "$TAILSCALE" = 1 ]; then
+  bold "Acesso pela tailnet (Tailscale)"
+  command -v tailscale >/dev/null || warn "O Tailscale não está instalado: o editor fica só local até ele ser instalado e conectado."
+  if user_systemd; then
+    mkdir -p "$(dirname "$SERVICE_FILE")"
+    cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=Editor LaTeX - servidor (também acessível pela tailnet)
+After=network-online.target
+
+[Service]
+ExecStart=$LAUNCHER --servidor
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+EOF
+    systemctl --user daemon-reload
+    # troca o servidor que estiver aberto (versão antiga ou aberto pela janela) pelo serviço
+    systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+    pkill -f "$APP_DIR/server.js" 2>/dev/null || true
+    for _ in $(seq 1 50); do port_busy || break; sleep 0.2; done
+    systemctl --user enable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+    for _ in $(seq 1 50); do port_busy && break; sleep 0.2; done
+    if port_busy; then
+      ok "Servidor sempre ligado (serviço $SERVICE_NAME, inicia junto com a sessão)"
+    else
+      warn "O serviço não iniciou; veja: journalctl --user -u $SERVICE_NAME"
+    fi
+  else
+    warn "Sem systemd de usuário: o servidor fica ligado depois de aberto pelo editor-latex, até reiniciar o computador."
+  fi
+elif [ -f "$SERVICE_FILE" ]; then
+  # --sem-tailscale: volta a ser só local, encerrando quando a última janela fecha
+  systemctl --user disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+  rm -f "$SERVICE_FILE"
+  systemctl --user daemon-reload 2>/dev/null || true
+  ok "Acesso pela tailnet desligado"
+fi
 
 # ── Ícone e atalho no menu ────────────────────────────────────────────────────
 mkdir -p "$(dirname "$ICON_FILE")" "$(dirname "$DESKTOP_FILE")"
@@ -398,6 +481,14 @@ echo
 bold "Pronto! O Editor LaTeX está instalado."
 echo "  • Abra pelo menu de aplicativos (procure por \"Editor LaTeX\") ou rode: editor-latex"
 echo "  • Seus projetos ficam em: $PASTA_PROJETOS"
+if [ "$TAILSCALE" = 1 ]; then
+  TS_IP="$(tailscale ip -4 2>/dev/null | head -1 || true)"
+  if [ -n "$TS_IP" ]; then
+    echo "  • Nos aparelhos da sua tailnet: http://$TS_IP:$PORT"
+  else
+    echo "  • Nos aparelhos da sua tailnet: http://<IP do Tailscale deste computador>:$PORT"
+  fi
+fi
 echo "  • Para atualizar depois, rode ./instalar.sh de novo; para remover, ./desinstalar.sh"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;

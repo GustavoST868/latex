@@ -7,6 +7,14 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/editor-latex"
 PROJECTS_DIR=""
 [ -f "$CONFIG_DIR/config" ] && PROJECTS_DIR="$(sed -n 's/^PROJECTS_DIR=//p' "$CONFIG_DIR/config" | tr -d '"')"
 
+# Remove o serviço do acesso pela tailnet (./instalar.sh --tailscale), se existir
+SERVICE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/editor-latex.service"
+if [ -f "$SERVICE_FILE" ]; then
+  systemctl --user disable --now editor-latex.service >/dev/null 2>&1 || true
+  rm -f "$SERVICE_FILE"
+  systemctl --user daemon-reload 2>/dev/null || true
+fi
+
 # Encerra o servidor do app, se estiver aberto (só ele: o caminho é único)
 pkill -f "$DATA_DIR/app/server.js" 2>/dev/null || true
 

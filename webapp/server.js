@@ -1,5 +1,5 @@
 const express = require('express');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -14,12 +14,25 @@ const git = require('./git');
 const PORT = process.env.PORT || 3000;
 // Só escuta na máquina local por padrão: o servidor executa LaTeX e escreve em disco
 const HOST = process.env.HOST || '127.0.0.1';
+// TAILSCALE=1 também aceita conexões pelos endereços deste computador na tailnet
+const TAILSCALE = /^(1|true|yes|sim)$/i.test(process.env.TAILSCALE || '');
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server, path: '/ws', verifyClient: ({ req }) => trustedRequest(req) });
-// Listen errors are reported once, by the HTTP server's handler below
-wss.on('error', () => {});
+// One WebSocket server shared by every HTTP listener (loopback and tailnet)
+const wss = new WebSocket.Server({ noServer: true, verifyClient: ({ req }) => trustedRequest(req) });
+
+// hand the /ws upgrades of an HTTP listener to the shared WebSocket server
+function acceptWebSockets(httpServer) {
+  httpServer.on('upgrade', (req, socket, head) => {
+    if (req.url.split('?')[0] !== '/ws') {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+  });
+}
+acceptWebSockets(server);
 
 // Projects directory - each project is a subfolder
 const PROJECTS_DIR = path.resolve(process.env.PROJECTS_DIR || path.join(__dirname, 'projects'));
@@ -45,9 +58,17 @@ const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp']);
 
 // Other websites open in the browser must not drive this server: reject unknown Host
 // headers (DNS rebinding) and cross-site writes (CSRF). Loopback origins are fine,
-// which keeps the Vite dev server working.
+// which keeps the Vite dev server working. With TAILSCALE, this computer's tailnet
+// addresses and MagicDNS names are accepted too.
 const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 const LISTENS_ON_LOOPBACK = /^(localhost|127\.0\.0\.1|::1)$/.test(HOST);
+// tailnet addresses ("100.x.y.z", "[fd7a:...]") and names of this computer, kept by syncTailscale
+const tailnetHosts = new Set();
+
+// a Host header without its port, in lowercase ("[::1]:3000" -> "[::1]")
+function hostWithoutPort(host) {
+  return host.toLowerCase().replace(/:\d+$/, '');
+}
 
 function trustedOrigin(origin, host) {
   if (!origin) return true;
@@ -61,7 +82,7 @@ function trustedOrigin(origin, host) {
 
 function trustedRequest(req) {
   const host = req.headers.host || '';
-  if (LISTENS_ON_LOOPBACK && !LOOPBACK_HOST.test(host)) return false;
+  if (LISTENS_ON_LOOPBACK && !LOOPBACK_HOST.test(host) && !tailnetHosts.has(hostWithoutPort(host))) return false;
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !req.headers.upgrade) return true;
   return trustedOrigin(req.headers.origin, host) && req.headers['sec-fetch-site'] !== 'cross-site';
 }
@@ -982,7 +1003,12 @@ const AI_PROMPTS = {
     + 'Não invente pacotes, comandos nem referências bibliográficas; se não tiver certeza, diga.',
   edit: 'Você edita trechos de documentos LaTeX. Siga a instrução e responda SOMENTE com o texto LaTeX que deve '
     + 'substituir o trecho (ou ser inserido no cursor): sem explicações, sem comentários sobre as mudanças e sem blocos ```. '
-    + 'Preserve comandos, rótulos, citações e a indentação do original, a menos que a instrução peça outra coisa. '
+    + 'A menos que a instrução peça outra coisa, preserve exatamente como estão no original: os comandos LaTeX e seus argumentos '
+    + '(\\cite{...}, \\citep{...}, \\ref{...}, \\eqref{...}, \\label{...}, \\url{...}, \\includegraphics[...]{...} etc.), '
+    + 'as chaves de citação, os rótulos e os nomes de arquivo, toda a matemática ($...$, $$...$$, \\(...\\), \\[...\\] e ambientes '
+    + 'como equation, align e gather, inclusive as palavras dentro deles), os nomes de ambientes (\\begin{...}/\\end{...}), '
+    + 'os comentários (% ...), os caracteres escapados (\\%, \\&, \\_, \\$), o ~ e a indentação. '
+    + 'Nunca invente chaves de citação nem rótulos. '
     + 'Mantenha o idioma do texto, salvo quando a instrução pedir uma tradução.',
   // Quick actions of the inline AI: the user message is the selected text and the reply is JSON
   'review-en': 'You are an expert English proofreader, like LanguageTool or Grammarly. Fix spelling, grammar, punctuation, '
@@ -1005,8 +1031,30 @@ const AI_PROMPTS = {
 
 // The selections come from LaTeX files: markup must survive the review or translation
 const LATEX_NOTES = {
-  en: ' The text may contain LaTeX: keep commands, environment names, labels, citation keys and math unchanged; only the prose changes.',
-  pt: ' O texto pode conter LaTeX: mantenha inalterados os comandos, os nomes de ambientes, os rótulos, as chaves de citação e as fórmulas; só o texto corrido muda.',
+  en: ' The text comes from a LaTeX file. Mandatory rules for the LaTeX code: '
+    + '(1) copy every command exactly as it is, with its arguments, e.g. \\cite{...}, \\citep{...}, \\ref{...}, \\eqref{...}, '
+    + '\\label{...}, \\url{...}, \\includegraphics[...]{...}; never translate or fix citation keys, labels, file names or options; '
+    + '(2) copy all math exactly as it is, including any words inside it: $...$, $$...$$, \\(...\\), \\[...\\] and environments '
+    + 'such as equation, align and gather; '
+    + '(3) keep environment names (\\begin{...}/\\end{...}), comments (% ...), escaped characters (\\%, \\&, \\_, \\$) and ~ unchanged; '
+    + '(4) only the prose changes: the text inside formatting or sectioning commands such as \\textbf{...}, \\emph{...}, '
+    + '\\section{...}, \\caption{...} and \\footnote{...} may be corrected or translated, but the command itself stays the same; '
+    + '(5) never list changes to LaTeX code in "changes"; '
+    + '(6) inside the JSON, double every backslash (e.g. "\\\\cite{smith2020}"), so that \\ref, \\textbf, \\frac, \\noindent '
+    + 'and \\begin are not read as control characters.',
+  pt: ' O texto vem de um arquivo LaTeX. Regras obrigatórias para o código LaTeX: '
+    + '(1) copie cada comando exatamente como está, com seus argumentos, por exemplo \\cite{...}, \\citep{...}, \\ref{...}, '
+    + '\\eqref{...}, \\label{...}, \\url{...}, \\includegraphics[...]{...}; nunca traduza nem corrija chaves de citação, rótulos, '
+    + 'nomes de arquivo ou opções; '
+    + '(2) copie toda a matemática exatamente como está, inclusive as palavras dentro dela: $...$, $$...$$, \\(...\\), \\[...\\] '
+    + 'e ambientes como equation, align e gather; '
+    + '(3) mantenha inalterados os nomes de ambientes (\\begin{...}/\\end{...}), os comentários (% ...), os caracteres escapados '
+    + '(\\%, \\&, \\_, \\$) e o ~; '
+    + '(4) só o texto corrido muda: o texto dentro de comandos de formatação ou de seção, como \\textbf{...}, \\emph{...}, '
+    + '\\section{...}, \\caption{...} e \\footnote{...}, pode ser corrigido ou traduzido, mas o comando continua igual; '
+    + '(5) nunca liste em "changes" mudanças no código LaTeX; '
+    + '(6) dentro do JSON, escreva cada barra invertida dobrada (ex.: "\\\\cite{silva2020}"), para que \\ref, \\textbf, \\frac, '
+    + '\\noindent e \\begin não sejam lidos como caracteres de controle.',
 };
 for (const mode of ['review-en', 'translate-en']) AI_PROMPTS[mode] += LATEX_NOTES.en;
 for (const mode of ['review-pt', 'translate-pt']) AI_PROMPTS[mode] += LATEX_NOTES.pt;
@@ -1161,6 +1209,24 @@ function broadcastAll(data) {
   wss.clients.forEach(client => { if (client.readyState === WebSocket.OPEN) client.send(payload); });
 }
 
+// ─── Quitting: save the pending history first ────────────────────────────────
+
+let quitting = false;
+
+// record the history of projects edited since the last version, then exit
+async function quit(message) {
+  if (quitting) return;
+  quitting = true;
+  console.log(message);
+  await Promise.all([...changedProjects].map(p => recordHistory(p, 'Alterações salvas')));
+  process.exit(0);
+}
+
+// systemd stop, logout or Ctrl+C; a second signal quits right away
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => (quitting ? process.exit(0) : quit('Encerrando, salvando o histórico.')));
+}
+
 // ─── Desktop app mode: quit once the last window has been closed ─────────────
 
 if (process.env.EXIT_WHEN_IDLE) {
@@ -1169,11 +1235,9 @@ if (process.env.EXIT_WHEN_IDLE) {
   const check = () => {
     clearTimeout(idleTimer);
     if (wss.clients.size === 0) {
-      idleTimer = setTimeout(async () => {
+      idleTimer = setTimeout(() => {
         if (wss.clients.size) return;
-        console.log('Nenhuma janela aberta, salvando o histórico e encerrando.');
-        await Promise.all([...changedProjects].map(p => recordHistory(p, 'Alterações salvas')));
-        process.exit(0);
+        quit('Nenhuma janela aberta, salvando o histórico e encerrando.');
       }, graceMs);
     }
   };
@@ -1183,6 +1247,88 @@ if (process.env.EXIT_WHEN_IDLE) {
   });
   // Also quit if no window ever connects
   check();
+}
+
+// ─── Tailscale: also listen on this computer's tailnet addresses ─────────────
+// Only the tailnet addresses are opened, so devices on the same Wi-Fi still can't
+// connect. They are checked again every 20 s, which follows Tailscale connecting,
+// disconnecting or changing address.
+
+const TAILSCALE_CHECK_MS = 20000;
+const tailnetServers = new Map(); // address -> http.Server
+const tailnetWarnings = new Set();
+let tailnetOffline = false;
+
+// run the tailscale command; resolves to its output, or '' when it is missing or fails
+function tailscaleCli(args) {
+  return new Promise(resolve => {
+    execFile('tailscale', args, { timeout: 5000 }, (err, stdout) => resolve(err ? '' : stdout));
+  });
+}
+
+// this computer's tailnet addresses (IPv4 and IPv6) and MagicDNS names
+async function tailscaleInfo() {
+  const ips = (await tailscaleCli(['ip'])).split(/\s+/).filter(Boolean);
+  if (!ips.length) return { ips, names: [] };
+  let dnsName = '';
+  try {
+    const status = JSON.parse(await tailscaleCli(['status', '--json']));
+    dnsName = ((status.Self && status.Self.DNSName) || '').replace(/\.$/, '').toLowerCase();
+  } catch (e) {}
+  const names = dnsName ? [dnsName, dnsName.split('.')[0]] : [];
+  return { ips, names };
+}
+
+// address as written in a URL ("fd7a::1" -> "[fd7a::1]")
+function urlAddress(ip) {
+  return ip.includes(':') ? `[${ip}]` : ip;
+}
+
+// open a listener on each new tailnet address and close the ones that went away
+async function syncTailscale() {
+  const { ips, names } = await tailscaleInfo();
+  tailnetHosts.clear();
+  ips.forEach(ip => tailnetHosts.add(urlAddress(ip)));
+  names.forEach(name => tailnetHosts.add(name));
+
+  if (!ips.length && !tailnetOffline) console.log('Tailscale: desconectado; o acesso pela tailnet volta quando ele conectar.');
+  tailnetOffline = !ips.length;
+
+  for (const [ip, srv] of tailnetServers) {
+    if (ips.includes(ip)) continue;
+    tailnetServers.delete(ip);
+    srv.close();
+    if (srv.closeAllConnections) srv.closeAllConnections();
+  }
+
+  for (const ip of ips) {
+    if (tailnetServers.has(ip)) continue;
+    const srv = http.createServer(app);
+    acceptWebSockets(srv);
+    tailnetServers.set(ip, srv);
+    srv.on('error', err => {
+      tailnetServers.delete(ip);
+      const warning = `${ip} ${err.code}`;
+      if (tailnetWarnings.has(warning)) return;
+      tailnetWarnings.add(warning);
+      console.warn(`Tailscale: não consegui ouvir em ${ip}: ${err.message}`);
+    });
+    srv.listen(PORT, ip, () => {
+      const byName = names.length && !ip.includes(':') ? `  ou  http://${names[1]}:${PORT}` : '';
+      console.log(`Tailscale: http://${urlAddress(ip)}:${PORT}${byName}`);
+    });
+  }
+}
+
+// start following the tailnet, when it was asked for
+function startTailscale() {
+  if (!TAILSCALE) return;
+  if (!LISTENS_ON_LOOPBACK) {
+    console.log(`Tailscale: ignorado, o servidor já ouve em ${HOST}.`);
+    return;
+  }
+  syncTailscale();
+  setInterval(syncTailscale, TAILSCALE_CHECK_MS);
 }
 
 // ─── Start server ─────────────────────────────────────────────────────────────
@@ -1198,6 +1344,7 @@ server.on('error', err => {
 server.listen(PORT, HOST, () => {
   const url = `http://localhost:${PORT}`;
   console.log(`\n🚀 LaTeX Editor rodando em ${url}\n`);
+  startTailscale();
   if (process.env.NO_OPEN) return;
 
   // Abre o navegador automaticamente (Multi-plataforma: Windows, Mac, Linux)

@@ -1589,6 +1589,8 @@ tr:hover .project-link { color: var(--accent); text-decoration: underline; }
 .cm-ai-del { color: var(--danger); text-decoration: line-through; white-space: pre-wrap; }
 .cm-ai-ins { color: var(--accent); font-weight: 500; white-space: pre-wrap; }
 .cm-ai-why { flex-basis: 100%; color: var(--text-muted); font-size: 12px; }
+.cm-ai-changed { color: var(--danger); background: var(--danger-subtle); border-radius: 2px; }
+.cm-ai-removed { color: var(--danger); text-decoration: line-through; opacity: .75; }
 .cm-tooltip:has(> .cm-ai-tip) { border: none !important; background: transparent !important; box-shadow: none !important; }
 .cm-ai-tip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--bg); color: var(--text); font-family: var(--font-ui); font-size: 12px; box-shadow: var(--shadow-sm); cursor: pointer; margin: 4px 0; }
 .cm-ai-tip:hover { border-color: var(--accent); }

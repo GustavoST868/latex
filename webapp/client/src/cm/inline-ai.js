@@ -210,6 +210,102 @@ function keepEdges(result, original) {
   return lead + result.trim() + trail;
 }
 
+// ════════════════════════════════════
+//  DIFF (what a review changed, in red)
+// ════════════════════════════════════
+
+// Words, runs of whitespace and single symbols: the units a review changes
+const tokenize = text => text.match(/[\p{L}\p{N}_]+|\s+|[^\p{L}\p{N}_\s]/gu) || [];
+
+// Past this many table cells the changed middle is marked as a whole
+const MAX_DIFF_CELLS = 4e6;
+
+// Word-level diff as a list of [kind, token]: 0 kept, 1 removed, 2 inserted
+function diffTokens(a, b) {
+  // The unchanged ends need no table
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+  }
+  const n = endA - start;
+  const m = endB - start;
+  const ops = b.slice(0, start).map(t => [0, t]);
+  if (n * m > MAX_DIFF_CELLS) {
+    for (let i = start; i < endA; i++) ops.push([1, a[i]]);
+    for (let j = start; j < endB; j++) ops.push([2, b[j]]);
+  } else {
+    // lcs[i * w + j]: longest common subsequence of the middles from i and j on
+    const w = m + 1;
+    const lcs = new Uint16Array((n + 1) * w);
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        lcs[i * w + j] = a[start + i] === b[start + j]
+          ? lcs[(i + 1) * w + j + 1] + 1
+          : Math.max(lcs[(i + 1) * w + j], lcs[i * w + j + 1]);
+      }
+    }
+    let i = 0;
+    let j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && a[start + i] === b[start + j]) {
+        ops.push([0, b[start + j]]);
+        i++;
+        j++;
+      } else if (j < m && (i === n || lcs[(i + 1) * w + j] < lcs[i * w + j + 1])) {
+        ops.push([2, b[start + j]]);
+        j++;
+      } else {
+        ops.push([1, a[start + i]]);
+        i++;
+      }
+    }
+  }
+  for (let j = endB; j < b.length; j++) ops.push([0, b[j]]);
+  return ops;
+}
+
+// The result as runs of { text, changed, before }, where before is the text it replaced
+function diffRuns(original, result) {
+  const runs = [];
+  for (const [kind, token] of diffTokens(tokenize(original), tokenize(result))) {
+    let last = runs[runs.length - 1];
+    if (!last || last.changed !== (kind !== 0)) {
+      last = { text: '', changed: kind !== 0, before: '' };
+      runs.push(last);
+    }
+    if (kind === 1) last.before += token;
+    else last.text += token;
+  }
+  // A lone space between two changes belongs to them: "a big house" -> "the large house"
+  const merged = [];
+  for (const run of runs) {
+    const prev = merged[merged.length - 1];
+    const gap = merged[merged.length - 2];
+    if (run.changed && prev && !prev.changed && !prev.text.trim() && gap?.changed) {
+      merged.pop();
+      gap.text += prev.text + run.text;
+      gap.before += prev.text + run.before;
+    } else {
+      merged.push(run);
+    }
+  }
+  return merged;
+}
+
+// Shows the result with what changed from the original in red (removals struck through)
+function showDiff(target, original, result) {
+  target.replaceChildren(...diffRuns(original, result).map(run => {
+    if (!run.changed) return document.createTextNode(run.text);
+    if (!run.text) return el('span', { className: 'cm-ai-removed', title: 'Removido' }, run.before);
+    const title = run.before.trim() ? `Antes: ${run.before}` : 'Acrescentado';
+    return el('span', { className: 'cm-ai-changed', title }, run.text);
+  }));
+}
+
 function showChanges(s, changes) {
   s.changesEl.replaceChildren(...changes.map(c => el('li', {},
     el('span', { className: 'cm-ai-del' }, c.original || '—'),
@@ -269,7 +365,8 @@ async function generate(s) {
         s.status.textContent = 'O modelo não devolveu uma resposta válida. Tente de novo (Enter).';
       } else {
         s.text = keepEdges(reply.result, original);
-        s.resultEl.textContent = s.text;
+        if (quick.mode.startsWith('review')) showDiff(s.resultEl, original, s.text);
+        else s.resultEl.textContent = s.text;
         showChanges(s, reply.changes);
         s.acceptBtn.classList.toggle('hidden', s.text === original);
         s.status.textContent = quickSummary(quick, original, { ...reply, result: s.text });
